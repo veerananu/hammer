@@ -1,6 +1,6 @@
 import React from "react";
 import {Sidebar, Menu, MenuItem} from "react-pro-sidebar";
-import './header.css'
+import './sidebar.css'
 import HomeOutlinedIcon from "@mui/icons-material/HomeOutlined";
 import PeopleOutlinedIcon from "@mui/icons-material/PeopleOutlined";
 import ContactsOutlinedIcon from "@mui/icons-material/ContactsOutlined";
@@ -10,7 +10,7 @@ import HelpOutlineOutlinedIcon from "@mui/icons-material/HelpOutlineOutlined";
 function WikiSideBar() {
   return (
     <div>
-      <Sidebar>
+      <Sidebar class="Sidebar">
         <Menu>
           <MenuItem icon={<HomeOutlinedIcon />}></MenuItem>
           <MenuItem icon={<PeopleOutlinedIcon />}></MenuItem>

@@ -12,13 +12,44 @@ code {
     monospace;
 }
 
-body {
+* {
+  padding: 0;
   margin: 0;
+}
+
+html,body {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+h1 {
+  display: block;
+  font-size: 2em;
+  margin-block-start: 0.67em;
+  margin-block-end: 0.67em;
+  margin-inline-start: 0px;
+  margin-inline-end: 0px;
+}
+.wiki-content {
+  margin-top: 8px;
+  bottom: 8px;
+  box-sizing: border-box;
+  word-wrap: break-word;
+  border-radius: 5px;
+}
+body {
+  margin-left: 100px;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+#content {
+  min-height: 600px;
+  height: auto !important;
+  height: 600px;
 }
 
 code {
