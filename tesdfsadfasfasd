@@ -1,1 +1,128 @@
-yyyyy
+{
+  "trigger": {
+    "schedule": {
+      "interval": "5m"
+    }
+  },
+  "input": {
+    "search": {
+      "request": {
+        "body": {
+          "size": 0,
+          "query": {
+            "bool": {
+              "must": [
+                {
+                  "range": {
+                    "@timestamp": {
+                      "gte": "now-60m",
+                      "lte": "now"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "aggs": {
+            "total_count_last_60m": {
+              "filter": {
+                "bool": {
+                  "should": [
+                    { "match": { "message": "cucej" } },
+                    { "match": { "message": "data" } }
+                  ],
+                  "minimum_should_match": 1
+                }
+              }
+            },
+            "failure_count1_last_60m": {
+              "filter": {
+                "bool": {
+                  "should": [
+                    { "match": { "data": "uhgt" } },
+                    { "match": { "message": "dbfailure" } }
+                  ],
+                  "minimum_should_match": 1
+                }
+              }
+            },
+            "failure_count2_last_60m": {
+              "filter": {
+                "bool": {
+                  "should": [
+                    { "match": { "message": "failuredatabase" } },
+                    { "match": { "colo": "tgc" } }
+                  ],
+                  "minimum_should_match": 1
+                }
+              }
+            },
+            "total_count_last_5m": {
+              "filter": {
+                "bool": {
+                  "should": [
+                    { "range": { "@timestamp": { "gte": "now-5m", "lte": "now" } } },
+                    { "match": { "message": "cucej" } },
+                    { "match": { "message": "data" } }
+                  ],
+                  "minimum_should_match": 1
+                }
+              }
+            },
+            "failure_count1_last_5m": {
+              "filter": {
+                "bool": {
+                  "should": [
+                    { "range": { "@timestamp": { "gte": "now-5m", "lte": "now" } } },
+                    { "match": { "data": "uhgt" } },
+                    { "match": { "message": "dbfailure" } }
+                  ],
+                  "minimum_should_match": 1
+                }
+              }
+            },
+            "failure_count2_last_5m": {
+              "filter": {
+                "bool": {
+                  "should": [
+                    { "range": { "@timestamp": { "gte": "now-5m", "lte": "now" } } },
+                    { "match": { "message": "failuredatabase" } },
+                    { "match": { "colo": "tgc" } }
+                  ],
+                  "minimum_should_match": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "condition": {
+    "script": {
+      "source": """
+        def total_60m = ctx.payload.aggregations.total_count_last_60m.doc_count;
+        def failures_60m = ctx.payload.aggregations.failure_count1_last_60m.doc_count + ctx.payload.aggregations.failure_count2_last_60m.doc_count;
+        def failure_rate_60m = (failures_60m / total_60m) * 100;
+
+        def total_5m = ctx.payload.aggregations.total_count_last_5m.doc_count;
+        def failures_5m = ctx.payload.aggregations.failure_count1_last_5m.doc_count + ctx.payload.aggregations.failure_count2_last_5m.doc_count;
+        def failure_rate_5m = (failures_5m / total_5m) * 100;
+
+        return failure_rate_60m > 3 || failure_rate_5m > 3;
+      """,
+      "lang": "painless"
+    }
+  },
+  "actions": {
+    "send_alert": {
+      "email": {
+        "to": "your-email@example.com",
+        "subject": "Failure Rate Alert",
+        "body": {
+          "text": "Failure rate exceeded 3%.\n\nLast 60m:\n- Total: {{ctx.payload.aggregations.total_count_last_60m.doc_count}}\n- Failures: {{ctx.payload.aggregations.failure_count1_last_60m.doc_count + ctx.payload.aggregations.failure_count2_last_60m.doc_count}}\n- Failure Rate: {{(ctx.payload.aggregations.failure_count1_last_60m.doc_count + ctx.payload.aggregations.failure_count2_last_60m.doc_count) / ctx.payload.aggregations.total_count_last_60m.doc_count * 100}}%\n\nLast 5m:\n- Total: {{ctx.payload.aggregations.total_count_last_5m.doc_count}}\n- Failures: {{ctx.payload.aggregations.failure_count1_last_5m.doc_count + ctx.payload.aggregations.failure_count2_last_5m.doc_count}}\n- Failure Rate: {{(ctx.payload.aggregations.failure_count1_last_5m.doc_count + ctx.payload.aggregations.failure_count2_last_5m.doc_count) / ctx.payload.aggregations.total_count_last_5m.doc_count * 100}}%"
+        }
+      }
+    }
+  }
+}
