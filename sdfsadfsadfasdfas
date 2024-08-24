@@ -1,1 +1,1 @@
-"source": "if (ctx.payload.aggregations.ger != null && ctx.payload.aggregations.sfds1 != null && ctx.payload.aggregations.sfds1.value != 0) { return (ctx.payload.aggregations.ger.value / ctx.payload.aggregations.sfds1.value) * 100 > 10; } return false;"
+"return (ctx.payload.aggregations.ger?.value != null && ctx.payload.aggregations.sfds1?.value != null && ctx.payload.aggregations.sfds1.value != 0) ? (ctx.payload.aggregations.ger.value / ctx.payload.aggregations.sfds1.value) * 100 > 10 : false;"
