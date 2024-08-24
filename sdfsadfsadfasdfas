@@ -1,0 +1,1 @@
+"source": "return ctx.payload.aggregations.sfds1.value != 0 && (ctx.payload.aggregations.ger.value / ctx.payload.aggregations.sfds1.value) * 100 > 10;"
