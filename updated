@@ -1,0 +1,1 @@
+"source": "double sdfsdValue = ctx.payload.aggregations.sdfsd.value; double ivrValue = ctx.payload.aggregations.ivr.value; double percentage = (sdfsdValue / ivrValue) * 100; return percentage > 5;"
