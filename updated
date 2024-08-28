@@ -11,3 +11,17 @@
         """
       }
     },
+
+
+[Unit]
+Description=Grafana instance
+After=network.target
+
+[Service]
+User=grafana
+Group=grafana
+Type=simple
+ExecStart=/usr/share/grafana/bin/grafana-server -config /usr/share/grafana/conf/defaults.ini -homepath /usr/share/grafana
+
+[Install]
+WantedBy=multi-user.target
