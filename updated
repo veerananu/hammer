@@ -1,1 +1,13 @@
 "source": "double sdfsdValue = ctx.payload.aggregations.sdfsd.value; double ivrValue = ctx.payload.aggregations.ivr.value; double percentage = (sdfsdValue / ivrValue) * 100; return percentage > 5;"
+
+
+  "actions": {
+    "log_values": {
+      "logging": {
+        "text": """
+          sdfsd.value: {{ctx.payload.aggregations.sdfsd.value}},
+          ivr.value: {{ctx.payload.aggregations.ivr.value}},
+          Percentage: {{(ctx.payload.aggregations.sdfsd.value / ctx.payload.aggregations.ivr.value) * 100}}
+        """
+      }
+    },
