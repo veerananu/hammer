@@ -1,0 +1,105 @@
+{
+  "trigger": {
+    "schedule": {
+      "interval": "1h"
+    }
+  },
+  "input": {
+    "search": {
+      "request": {
+        "indices": ["your_index"],
+        "body": {
+          "aggs": {
+            "testing": {
+              "terms": {
+                "field": "your_field"
+              },
+              "aggs": {
+                "Total_count_m1_texas": {
+                  "value_count": {
+                    "field": "your_field"
+                  }
+                },
+                "Total_count_m1_dfw": {
+                  "value_count": {
+                    "field": "your_field"
+                  }
+                },
+                "success_count_m2_dfw": {
+                  "value_count": {
+                    "field": "your_field"
+                  }
+                },
+                "success_count_m2_texas": {
+                  "value_count": {
+                    "field": "your_field"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "condition": {
+    "script": {
+      "source": """
+        def total_count_m1_texas = ctx.payload.aggregations.testing.buckets.Total_count_m1_texas.doc_count;
+        def total_count_m1_dfw = ctx.payload.aggregations.testing.buckets.Total_count_m1_dfw.doc_count;
+        def success_count_m2_dfw = ctx.payload.aggregations.testing.buckets.success_count_m2_dfw.doc_count;
+        def success_count_m2_texas = ctx.payload.aggregations.testing.buckets.success_count_m2_texas.doc_count;
+
+        if (total_count_m1_texas == null || total_count_m1_dfw == null || success_count_m2_dfw == null || success_count_m2_texas == null) {
+          return false;
+        }
+
+        def success_percentage_m1_texas = (success_count_m2_texas / total_count_m1_texas) * 100;
+        def success_percentage_m1_dfw = (success_count_m2_dfw / total_count_m1_dfw) * 100;
+
+        ctx.payload.success_percentage_m1_texas = success_percentage_m1_texas;
+        ctx.payload.success_percentage_m1_dfw = success_percentage_m1_dfw;
+
+        return true;
+      """
+    }
+  },
+  "actions": {
+    "log": {
+      "logging": {
+        "text": """
+          Total count M1 Texas: {{ctx.payload.aggregations.testing.buckets.Total_count_m1_texas.doc_count}}
+          Total count M1 DFW: {{ctx.payload.aggregations.testing.buckets.Total_count_m1_dfw.doc_count}}
+          Success count M2 DFW: {{ctx.payload.aggregations.testing.buckets.success_count_m2_dfw.doc_count}}
+          Success count M2 Texas: {{ctx.payload.aggregations.testing.buckets.success_count_m2_texas.doc_count}}
+          Calculated success percentage for Texas: {{ctx.payload.success_percentage_m1_texas}}
+          Calculated success percentage for DFW: {{ctx.payload.success_percentage_m1_dfw}}
+        """
+      }
+    },
+    "email_admin": {
+      "email": {
+        "to": "your_email@example.com",
+        "subject": "Success Percentages Report",
+        "body": {
+          "text": """
+            Total count M1 Texas: {{ctx.payload.aggregations.testing.buckets.Total_count_m1_texas.doc_count}}
+            Total count M1 DFW: {{ctx.payload.aggregations.testing.buckets.Total_count_m1_dfw.doc_count}}
+            Success count M2 DFW: {{ctx.payload.aggregations.testing.buckets.success_count_m2_dfw.doc_count}}
+            Success count M2 Texas: {{ctx.payload.aggregations.testing.buckets.success_count_m2_texas.doc_count}}
+            Calculated success percentage for Texas: {{ctx.payload.success_percentage_m1_texas}}%
+            Calculated success percentage for DFW: {{ctx.payload.success_percentage_m1_dfw}}%
+          """
+        }
+      }
+    }
+  }
+}
+
+
+
+"condition": { "script": { "source": "def total_count_m1_texas = ctx.payload.aggregations.testing.buckets.Total_count_m1_texas.doc_count; def total_count_m1_dfw = ctx.payload.aggregations.testing.buckets.Total_count_m1_dfw.doc_count; def success_count_m2_dfw = ctx.payload.aggregations.testing.buckets.success_count_m2_dfw.doc_count; def success_count_m2_texas = ctx.payload.aggregations.testing.buckets.success_count_m2_texas.doc_count; if (total_count_m1_texas == null || total_count_m1_dfw == null || success_count_m2_dfw == null || success_count_m2_texas == null) { return false; } def success_percentage_m1_texas = (success_count_m2_texas / total_count_m1_texas) * 100; def success_percentage_m1_dfw = (success_count_m2_dfw / total_count_m1
+
+
+
+"text": "Total count M1 Texas: {{ctx.payload.aggregations.testing.buckets.Total_count_m1_texas.doc_count}} Total count M1 DFW: {{ctx.payload.aggregations.testing.buckets.Total_count_m1_dfw.doc_count}} Success count M2 DFW: {{ctx.payload.aggregations.testing.buckets.success_count_m2_dfw.doc_count}} Success count M2 Texas: {{ctx.payload.aggregations.testing.buckets.success_count_m2_texas.doc_count}} Calculated success percentage for Texas: {{ctx.payload.success_percentage_m1_texas}}% Calculated success percentage for DFW: {{ctx.payload.success_percentage_m1_dfw}}%"
