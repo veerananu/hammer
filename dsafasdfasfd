@@ -1,0 +1,1 @@
+if (params.failure_tx == null || params.total == null) { return false; } def failureRate = (100 * params.failure_tx) / params.total; return BigDecimal.valueOf(failureRate).setScale(4, RoundingMode.HALF_UP);"
