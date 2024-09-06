@@ -1,0 +1,51 @@
+#!/bin/bash
+
+# Paths
+BACKUP_DIR="/path/to/backup-dir"
+RESTORE_DB_PATH="/path/to/your/restore_database.db"
+
+# Get today's date in YYYYMMDD format
+TODAY_DATE=$(date +%Y%m%d)
+
+# Find the most recent backup file based on the date in the filename
+LATEST_BACKUP=$(ls "$BACKUP_DIR"/database_backup_*.db | sort -V | tail -n 1)
+
+# Check if a backup file was found
+if [ -z "$LATEST_BACKUP" ]; then
+    echo "No backup file found in $BACKUP_DIR"
+    exit 1
+fi
+
+# Extract the date from the filename
+BACKUP_DATE=$(basename "$LATEST_BACKUP" | sed -E 's/database_backup_([0-9]{8})\.db/\1/')
+
+# Check if the backup date matches today's date
+if [ "$BACKUP_DATE" != "$TODAY_DATE" ]; then
+    echo "Latest backup file is not from today. Skipping restore."
+    exit 1
+fi
+
+# Check if the backup file is non-empty
+if [ ! -s "$LATEST_BACKUP" ]; then
+    echo "Backup file $LATEST_BACKUP is empty or corrupt."
+    exit 1
+fi
+
+# Optionally, perform a more thorough integrity check.
+# For SQLite, you could use the `.integrity_check` command.
+sqlite3 "$LATEST_BACKUP" "PRAGMA integrity_check;" | grep -q 'ok'
+if [ $? -ne 0 ]; then
+    echo "Backup file $LATEST_BACKUP failed integrity check."
+    exit 1
+fi
+
+# Restore the database using the most recent valid backup file
+sqlite3 "$RESTORE_DB_PATH" ".restore '$LATEST_BACKUP'"
+
+# Check if the restore was successful
+if [ $? -eq 0 ]; then
+    echo "Database restored successfully from $LATEST_BACKUP"
+else
+    echo "Failed to restore database from $LATEST_BACKUP"
+    exit 1
+fi
