@@ -1,0 +1,26 @@
+#!/bin/bash
+
+# Database connection details
+DB_PATH="/path/to/your/database.db"
+
+# vmagent URL
+VMAGENT_URL="http://your-vmagent-url/api/v1/import/prometheus"
+
+# Query to count the number of users with role 'Editor'
+count_editors=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM org_user ou JOIN user u ON ou.user_id = u.id WHERE ou.role = 'Editor';")
+
+# Query to count the number of users with role 'Admin'
+count_admins=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM org_user ou JOIN user u ON ou.user_id = u.id WHERE ou.role = 'Admin';")
+
+# Query to count the number of users with role 'Viewer'
+count_viewers=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM org_user ou JOIN user u ON ou.user_id = u.id WHERE ou.role = 'Viewer';")
+
+# Prepare Prometheus metrics in the required format
+metric_editors="user_role_count{role=\"Editor\"} $count_editors $(date +%s)"
+metric_admins="user_role_count{role=\"Admin\"} $count_admins $(date +%s)"
+metric_viewers="user_role_count{role=\"Viewer\"} $count_viewers $(date +%s)"
+
+# Post the metrics to vmagent
+curl -X POST -H "Content-Type: text/plain" --data-raw "$metric_editors" "$VMAGENT_URL"
+curl -X POST -H "Content-Type: text/plain" --data-raw "$metric_admins" "$VMAGENT_URL"
+curl -X POST -H "Content-Type: text/plain" --data-raw "$metric_viewers" "$VMAGENT_URL"
