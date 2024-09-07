@@ -1,0 +1,21 @@
+#!/bin/bash
+
+# Define the directory and file pattern
+BACKUP_DIR="/path/to/backup/"
+FILE_PATTERN="*.db.*"
+
+# Find files modified yesterday
+FILES_FOUND=$(find "$BACKUP_DIR" -name "$FILE_PATTERN" -type f -mtime 1)
+
+# Check if any files were found
+if [ -n "$FILES_FOUND" ]; then
+    echo "Files found. Deleting..."
+    # Delete the files found
+    find "$BACKUP_DIR" -name "$FILE_PATTERN" -type f -mtime 1 -exec rm {} \;
+else
+    echo "No files found from yesterday. Continuing script..."
+fi
+
+# Continue with the rest of your script
+echo "Executing the rest of the script..."
+# Add your remaining script commands here
