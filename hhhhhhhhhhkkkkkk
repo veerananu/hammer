@@ -1,1 +1,16 @@
-djjd
+Backup Process:
+
+Active Server:
+Execute a script to create a backup of the Grafana database.
+Store the backup in an NFS mount.
+Send a status update to Victoria Metrics.
+Restore Process:
+
+Passive Server:
+Run a script to monitor the NFS mount for new backups.
+When a backup matching today's date is found:
+Update Grafana users with the editor role to viewer.
+Stop the Grafana service.
+Restore the backup to the passive Grafana instance.
+Delete backups older than 30 days.
+Send a status update to Victoria Metrics.
