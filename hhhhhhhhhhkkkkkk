@@ -1,21 +1,17 @@
-#!/bin/bash
+The ability to pay bills and transfer money without the need to connect to the Internet, thereby allowing financial transactions to be conducted by those living in areas without reliable Internet access. 
 
-# Define the directory and file pattern
-BACKUP_DIR="/path/to/backup/"
-FILE_PATTERN="*.db.*"
 
-# Find files modified yesterday
-FILES_FOUND=$(find "$BACKUP_DIR" -name "$FILE_PATTERN" -type f -mtime 1)
 
-# Check if any files were found
-if [ -n "$FILES_FOUND" ]; then
-    echo "Files found. Deleting..."
-    # Delete the files found
-    find "$BACKUP_DIR" -name "$FILE_PATTERN" -type f -mtime 1 -exec rm {} \;
-else
-    echo "No files found from yesterday. Continuing script..."
-fi
+Users are required to register their mobile phone numbers with a designated financial service provider to receive financial services.
 
-# Continue with the rest of your script
-echo "Executing the rest of the script..."
-# Add your remaining script commands here
+Payment of bills:
+
+During the payment process, users send a text message containing specific keywords and details, such as bill amount, payee, and payment reference, to a predefined number.
+
+In response to the request, the system verifies the user's account and deducts the payment from the linked bank account or mobile wallet.
+
+Transfer of funds:
+
+The user sends a text message with the recipient's mobile number, the transfer amount, and a security code to the recipient.
+
+After verifying the transaction, the system transfers the funds to the recipient's bank account.
