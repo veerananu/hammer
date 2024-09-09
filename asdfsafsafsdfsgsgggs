@@ -1,0 +1,38 @@
+#!/bin/bash
+
+set -e
+
+source_host=$1
+source_api_key=$2
+
+sourceurl="https://${source_host}/api/folders?apikey=${source_api_key}"
+
+function pullFolders() {
+  logme "info" "pullFolders:: Fetching folders from source Grafana"
+
+  # Get all folders from the source, using -k to ignore SSL certificate issues
+  source_folders=$(curl -k -s $sourceurl)
+
+  # Check if folders were retrieved successfully
+  if [ -z "$source_folders" ]; then
+    logme "err" "Failed to retrieve folders from the source"
+    exit 1
+  fi
+
+  # Parse and display the JSON response
+  echo "$source_folders" | jq '.'
+
+  logme "info" "pullFolders:: Folders fetched successfully"
+}
+
+function logme() {
+  NC="\033[0m"
+  case $1 in
+    "err") COLOR="\e[31m";;
+    "info") COLOR="\033[0;32m";;
+    *) COLOR="\033[0m";;
+  esac
+  echo -e "${COLOR} $2 ${NC}"
+}
+
+pullFolders
