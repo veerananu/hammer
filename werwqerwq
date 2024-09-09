@@ -1,0 +1,49 @@
+#!/bin/bash
+
+set -e
+
+source_host=$1
+source_api_key=$2
+target_host=$3
+target_api_key=$4
+
+sourceurl="http://${source_host}:3000/api/folders?apikey=${source_api_key}"
+targeturl="http://${target_host}:3000/api/folders?apikey=${target_api_key}"
+
+function createFolder(){
+  logme "info" "createFolder:: "
+  url=$sourceurl
+
+  # Get all folders from the source
+  source_folders=$(curl -s $url)
+
+  # Parse the JSON response to extract folder details
+  source_folders_array=$(echo "$source_folders" | jq -r '.[]')
+
+  for source_folder in $source_folders_array; do
+    source_folder_id=$(echo "$source_folder" | jq -r '.id')
+    source_folder_title=$(echo "$source_folder" | jq -r '.title')
+    source_folder_url=$(echo "$source_folder" | jq -r '.url')
+
+    # Create a new folder with the same details on the target
+    target_folder_json="{\"title\": \"$source_folder_title\", \"url\": \"$source_folder_url\"}"
+    curl -s -XPOST -H "Accept: application/json" \
+                  -H "Content-Type: application/json" \
+                  -d "$target_folder_json" \
+                  $targeturl
+  done
+}
+
+function logme() {
+  NC="\033[0m"
+  case $1 in
+    "err") COLOR="\e[31m";;
+    "info") COLOR="\033[0;32m";;
+    *) COLOR="\033[0m";;
+  esac
+  echo -e "${COLOR} $2 ${NC}"
+}
+
+# Update target URL before running
+target_url="http://${target_host}:3000"  # Replace with actual target URL
+createFolder
