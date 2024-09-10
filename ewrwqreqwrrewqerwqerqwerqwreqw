@@ -1,0 +1,61 @@
+#!/bin/bash
+
+set -e
+
+source_host=$1
+source_api_key=$2
+target_host=$3
+target_api_key=$4
+
+sourceurl="https://${source_host}/api/folders"
+targeturl="https://${target_host}/api/folders"
+
+function pullFolders() {
+  logme "info" "pullFolders:: Fetching folders from source Grafana"
+
+  # Get all folders from the source, using -k to ignore SSL certificate issues
+  source_folders=$(curl -k -s -H "Authorization: Bearer ${source_api_key}" "$sourceurl")
+
+  # Check if folders were retrieved successfully
+  if [ -z "$source_folders" ]; then
+    logme "err" "Failed to retrieve folders from the source"
+    exit 1
+  fi
+
+  # Display the JSON response
+  echo "$source_folders"
+
+  logme "info" "pullFolders:: Folders fetched successfully"
+}
+
+function createFolders() {
+  logme "info" "createFolders:: Creating folders in target Grafana"
+
+  # Iterate over each folder and create it in the target Grafana
+  echo "$source_folders" | grep -o '{[^}]*}' | while read -r folder; do
+    uid=$(echo "$folder" | grep -o '"uid":"[^"]*"' | awk -F':' '{print $2}' | tr -d '"')
+    title=$(echo "$folder" | grep -o '"title":"[^"]*"' | awk -F':' '{print $2}' | tr -d '"')
+    payload="{\"uid\":\"$uid\",\"title\":\"$title\"}"
+
+    response=$(curl -k -s -H "Authorization: Bearer ${target_api_key}" -H "Content-Type: application/json" -X POST -d "$payload" "$targeturl")
+
+    if echo "$response" | grep -q '"id"'; then
+      logme "info" "Folder '$title' created successfully"
+    else
+      logme "err" "Failed to create folder '$title'"
+    fi
+  done
+}
+
+function logme() {
+  NC="\033[0m"
+  case $1 in
+    "err") COLOR="\e[31m";;
+    "info") COLOR="\033[0;32m";;
+    *) COLOR="\033[0m";;
+  esac
+  echo -e "${COLOR} $2 ${NC}"
+}
+
+pullFolders
+createFolders
