@@ -35,12 +35,16 @@ transfer_dashboard() {
         dashboard_payload=$(jq -n --argjson dashboard "$dashboard_json" --arg folderUid "$folder_uid" '{"dashboard":$dashboard,"folderUid":$folderUid,"overwrite":true}')
 
         # Create or update the dashboard on the target Grafana instance
-        response=$(curl -s -w "%{http_code}" -o /dev/null -H "Authorization: $API_KEY_TARGET" -H "Content-Type: application/json" -X POST -d "$dashboard_payload" "${TARGET_GRAFANA_URL}/api/dashboards/db")
+        response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -H "Authorization: $API_KEY_TARGET" -H "Content-Type: application/json" -X POST -d "$dashboard_payload" "${TARGET_GRAFANA_URL}/api/dashboards/db")
         
-        if [ "$response" -eq 200 ]; then
+        http_status=$(echo "$response" | grep "HTTP_STATUS" | awk -F':' '{print $2}')
+        response_body=$(echo "$response" | sed 's/HTTP_STATUS:[0-9]\+//')
+
+        if [ "$http_status" -eq 200 ]; then
             echo "Transferred dashboard: $dashboard_title"
         else
-            echo "Failed to transfer dashboard: $dashboard_title. HTTP Status: $response"
+            echo "Failed to transfer dashboard: $dashboard_title. HTTP Status: $http_status"
+            echo "Response: $response_body"
             echo "Payload: $dashboard_payload"
         fi
     else
