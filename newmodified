@@ -1,0 +1,65 @@
+#!/bin/bash
+
+# Variables
+SOURCE_GRAFANA_URL="http://source-grafana-instance.com"
+TARGET_GRAFANA_URL="http://target-grafana-instance.com"
+API_KEY_SOURCE="Bearer YOUR_SOURCE_API_KEY"
+API_KEY_TARGET="Bearer YOUR_TARGET_API_KEY"
+
+# Function to transfer a folder
+transfer_folder() {
+    local folder_uid=$1
+    folder=$(curl -s -H "Authorization: $API_KEY_SOURCE" "${SOURCE_GRAFANA_URL}/api/folders/${folder_uid}")
+    if [ ! -z "$folder" ]; then
+        folder_name=$(echo $folder | grep -o '"title":"[^"]*' | grep -o '[^"]*$')
+        folder_uid=$(echo $folder | grep -o '"uid":"[^"]*' | grep -o '[^"]*$')
+        folder_payload="{\"title\":\"$folder_name\",\"uid\":\"$folder_uid\"}"
+        curl -s -H "Authorization: $API_KEY_TARGET" -H "Content-Type: application/json" -X POST -d "$folder_payload" "${TARGET_GRAFANA_URL}/api/folders" > /dev/null
+        echo "Transferred folder: $folder_name"
+    else
+        echo "Folder with UID $folder_uid not found on source."
+    fi
+}
+
+# Function to transfer a dashboard
+transfer_dashboard() {
+    local dashboard_uid=$1
+    dashboard=$(curl -s -H "Authorization: $API_KEY_SOURCE" "${SOURCE_GRAFANA_URL}/api/dashboards/uid/${dashboard_uid}")
+    if [ ! -z "$dashboard" ]; then
+        # Extract the JSON block for the dashboard
+        dashboard_json=$(echo $dashboard | sed -n 's/.*"dashboard":\({.*}\),"meta.*/\1/p')
+        
+        # Extract other necessary fields
+        dashboard_title=$(echo $dashboard_json | grep -o '"title":"[^"]*' | grep -o '[^"]*$')
+        folder_uid=$(echo $dashboard | grep -o '"folderUid":"[^"]*' | grep -o '[^"]*$')
+
+        # Prepare dashboard payload
+        dashboard_payload="{\"dashboard\":$dashboard_json,\"folderUid\":\"$folder_uid\",\"overwrite\":true}"
+
+        # Create or update the dashboard on the target Grafana instance
+        curl -s -H "Authorization: $API_KEY_TARGET" -H "Content-Type: application/json" -X POST -d "$dashboard_payload" "${TARGET_GRAFANA_URL}/api/dashboards/db" > /dev/null
+        echo "Transferred dashboard: $dashboard_title"
+    else
+        echo "Dashboard with UID $dashboard_uid not found on source."
+    fi
+}
+
+# Get all folders from the source Grafana instance
+folders=$(curl -s -H "Authorization: $API_KEY_SOURCE" "${SOURCE_GRAFANA_URL}/api/folders")
+folder_uids=$(echo $folders | grep -o '"uid":"[^"]*' | grep -o '[^"]*$')
+
+# Transfer folders
+for folder_uid in $folder_uids; do
+    transfer_folder $folder_uid
+done
+
+# Get all dashboards from the source Grafana instance
+dashboards=$(curl -s -H "Authorization: $API_KEY_SOURCE" "${SOURCE_GRAFANA_URL}/api/search?query=&type=dash-db")
+dashboard_uids=$(echo $dashboards | grep -o '"uid":"[^"]*' | grep -o '[^"]*$')
+
+# Transfer dashboards
+for dashboard_uid in $dashboard_uids; do
+    transfer_dashboard $dashboard_uid
+done
+
+echo "Transfer complete."
