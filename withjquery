@@ -30,7 +30,7 @@ transfer_dashboard() {
     echo "Dashboard JSON: $dashboard"
     
     if [ ! -z "$dashboard" ]; then
-        dashboard_json=$(echo $dashboard | jq -r .dashboard)
+        dashboard_json=$(echo $dashboard | jq -r .dashboard | jq '.id=null')
         if [ -z "$dashboard_json" ]; then
             echo "Failed to retrieve dashboard JSON for UID: $dashboard_uid"
             return
