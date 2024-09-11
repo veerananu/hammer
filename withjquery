@@ -6,9 +6,6 @@ TARGET_GRAFANA_URL="http://target-grafana-instance.com"
 API_KEY_SOURCE="Bearer YOUR_SOURCE_API_KEY"
 API_KEY_TARGET="Bearer YOUR_TARGET_API_KEY"
 
-# Target Folder UID (update with the folder UID where you want to place the dashboards)
-TARGET_FOLDER_UID="your_target_folder_uid"
-
 # Function to transfer a folder
 transfer_folder() {
     local folder_uid=$1
@@ -27,7 +24,7 @@ transfer_folder() {
 # Updated Function to transfer a dashboard
 transfer_dashboard() {
     local dashboard_uid=$1
-    echo "Attempting to transfer dashboard with UID: $dashboard_uid to folder UID: $TARGET_FOLDER_UID"
+    echo "Attempting to transfer dashboard with UID: $dashboard_uid"
     
     dashboard=$(curl -s -H "Authorization: $API_KEY_SOURCE" "${SOURCE_GRAFANA_URL}/api/dashboards/uid/${dashboard_uid}")
     echo "Dashboard JSON: $dashboard"
@@ -41,9 +38,17 @@ transfer_dashboard() {
         
         dashboard_title=$(echo $dashboard_json | jq -r .title)
         dashboard_uid=$(echo $dashboard_json | jq -r .uid)
+        folder_uid=$(echo $dashboard | jq -r .meta.folderUid)
+
+        # Debug: Print the dashboard JSON and folder UID
+        echo "Dashboard JSON: $dashboard_json"
+        echo "Folder UID: $folder_uid"
 
         # Prepare dashboard payload with target folder UID
-        dashboard_payload=$(jq -n --argjson dashboard "$dashboard_json" --arg folderUid "$TARGET_FOLDER_UID" '{"dashboard":$dashboard,"folderUid":$folderUid,"overwrite":true}')
+        dashboard_payload=$(jq -n --argjson dashboard "$dashboard_json" --arg folderUid "$folder_uid" '{"dashboard":$dashboard,"folderUid":$folderUid,"overwrite":true}')
+
+        # Debug: Print the payload
+        echo "Dashboard Payload: $dashboard_payload"
 
         # Create or update the dashboard on the target Grafana instance
         response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -H "Authorization: $API_KEY_TARGET" -H "Content-Type: application/json" -X POST -d "$dashboard_payload" "${TARGET_GRAFANA_URL}/api/dashboards/db")
