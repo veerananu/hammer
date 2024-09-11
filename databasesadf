@@ -1,105 +1,63 @@
 #!/bin/bash
 
-set -e
+# Variables
+SOURCE_GRAFANA_URL="http://source-grafana-instance.com"
+TARGET_GRAFANA_URL="http://target-grafana-instance.com"
+API_KEY_SOURCE="Bearer YOUR_SOURCE_API_KEY"
+API_KEY_TARGET="Bearer YOUR_TARGET_API_KEY"
 
-source_host=$1
-source_api_key=$2
-target_host=$3
-target_api_key=$4
-
-source_folders_url="https://${source_host}/api/folders"
-target_folders_url="https://${target_host}/api/folders"
-source_dashboards_url="https://${source_host}/api/search?folderIds="
-target_dashboards_url="https://${target_host}/api/dashboards/db"
-
-function pullFolders() {
-  logme "info" "pullFolders:: Fetching folders from source Grafana"
-
-  source_folders=$(curl -k -s -H "Authorization: Bearer ${source_api_key}" "$source_folders_url")
-
-  if [ -z "$source_folders" ]; then
-    logme "err" "Failed to retrieve folders from the source"
-    exit 1
-  fi
-
-  echo "$source_folders"
-  logme "info" "pullFolders:: Folders fetched successfully"
-}
-
-function createFolders() {
-  logme "info" "createFolders:: Creating folders in target Grafana"
-
-  echo "$source_folders" | grep -o '{[^}]*}' | while read -r folder; do
-    uid=$(echo "$folder" | grep -o '"uid":"[^"]*"' | awk -F':' '{print $2}' | tr -d '"')
-    title=$(echo "$folder" | grep -o '"title":"[^"]*"' | awk -F':' '{print $2}' | tr -d '"')
-    payload="{\"uid\":\"$uid\",\"title\":\"$title\"}"
-
-    response=$(curl -k -s -H "Authorization: Bearer ${target_api_key}" -H "Content-Type: application/json" -X POST -d "$payload" "$target_folders_url")
-
-    if echo "$response" | grep -q '"id"'; then
-      logme "info" "Folder '$title' created successfully"
+# Function to transfer a folder
+transfer_folder() {
+    local folder_uid=$1
+    folder=$(curl -s -H "Authorization: $API_KEY_SOURCE" "${SOURCE_GRAFANA_URL}/api/folders/${folder_uid}")
+    if [ ! -z "$folder" ]; then
+        folder_name=$(echo $folder | grep -o '"title":"[^"]*' | grep -o '[^"]*$')
+        folder_uid=$(echo $folder | grep -o '"uid":"[^"]*' | grep -o '[^"]*$')
+        folder_payload="{\"title\":\"$folder_name\",\"uid\":\"$folder_uid\"}"
+        curl -s -H "Authorization: $API_KEY_TARGET" -H "Content-Type: application/json" -X POST -d "$folder_payload" "${TARGET_GRAFANA_URL}/api/folders" > /dev/null
+        echo "Transferred folder: $folder_name"
     else
-      logme "err" "Failed to create folder '$title'"
-      logme "err" "Response: $response"
+        echo "Folder with UID $folder_uid not found on source."
     fi
-  done
 }
 
-function pullDashboards() {
-  logme "info" "pullDashboards:: Fetching dashboards from source Grafana"
+# Function to transfer a dashboard
+transfer_dashboard() {
+    local dashboard_uid=$1
+    dashboard=$(curl -s -H "Authorization: $API_KEY_SOURCE" "${SOURCE_GRAFANA_URL}/api/dashboards/uid/${dashboard_uid}")
+    if [ ! -z "$dashboard" ]; then
+        dashboard_json=$(echo $dashboard | grep -o '"dashboard":{.*' | sed 's/,"meta":{.*//')
+        dashboard_title=$(echo $dashboard_json | grep -o '"title":"[^"]*' | grep -o '[^"]*$')
+        dashboard_uid=$(echo $dashboard_json | grep -o '"uid":"[^"]*' | grep -o '[^"]*$')
+        folder_uid=$(echo $dashboard | grep -o '"folderUid":"[^"]*' | grep -o '[^"]*$')
 
-  echo "$source_folders" | grep -o '{[^}]*}' | while read -r folder; do
-    uid=$(echo "$folder" | grep -o '"uid":"[^"]*"' | awk -F':' '{print $2}' | tr -d '"')
-    dashboards=$(curl -k -s -H "Authorization: Bearer ${source_api_key}" "${source_dashboards_url}${uid}")
+        # Prepare dashboard payload
+        dashboard_payload="{\"dashboard\":$dashboard_json,\"folderUid\":\"$folder_uid\",\"overwrite\":true}"
 
-    if [ -z "$dashboards" ]; then
-      logme "err" "Failed to retrieve dashboards for folder UID '$uid'"
-      exit 1
+        # Create or update the dashboard on the target Grafana instance
+        curl -s -H "Authorization: $API_KEY_TARGET" -H "Content-Type: application/json" -X POST -d "$dashboard_payload" "${TARGET_GRAFANA_URL}/api/dashboards/db" > /dev/null
+        echo "Transferred dashboard: $dashboard_title"
+    else
+        echo "Dashboard with UID $dashboard_uid not found on source."
     fi
-
-    echo "$dashboards" | grep -o '{[^}]*}' | while read -r dashboard; do
-      dashboard_uid=$(echo "$dashboard" | grep -o '"uid":"[^"]*"' | awk -F':' '{print $2}' | tr -d '"')
-      dashboard_json=$(curl -k -s -H "Authorization: Bearer ${source_api_key}" "${source_host}/api/dashboards/uid/${dashboard_uid}")
-
-      if [ -z "$dashboard_json" ]; then
-        logme "err" "Failed to retrieve dashboard UID '$dashboard_uid'"
-        exit 1
-      fi
-
-      createDashboard "$dashboard_json"
-    done
-  done
-
-  logme "info" "pullDashboards:: Dashboards fetched successfully"
 }
 
-function createDashboard() {
-  dashboard_json=$1
-  folder_uid=$(echo "$dashboard_json" | grep -o '"folderUid":"[^"]*"' | awk -F':' '{print $2}' | tr -d '"')
-  payload=$(echo "$dashboard_json" | grep -o '"dashboard":{[^}]*}' | sed 's/"dashboard"://')
+# Get all folders from the source Grafana instance
+folders=$(curl -s -H "Authorization: $API_KEY_SOURCE" "${SOURCE_GRAFANA_URL}/api/folders")
+folder_uids=$(echo $folders | grep -o '"uid":"[^"]*' | grep -o '[^"]*$')
 
-  logme "info" "Payload: $payload"
+# Transfer folders
+for folder_uid in $folder_uids; do
+    transfer_folder $folder_uid
+done
 
-  response=$(curl -k -s -H "Authorization: Bearer ${target_api_key}" -H "Content-Type: application/json" -X POST -d "{\"dashboard\":$payload,\"folderUid\":\"$folder_uid\",\"overwrite\":true}" "$target_dashboards_url")
+# Get all dashboards from the source Grafana instance
+dashboards=$(curl -s -H "Authorization: $API_KEY_SOURCE" "${SOURCE_GRAFANA_URL}/api/search?query=&type=dash-db")
+dashboard_uids=$(echo $dashboards | grep -o '"uid":"[^"]*' | grep -o '[^"]*$')
 
-  if echo "$response" | grep -q '"id"'; then
-    logme "info" "Dashboard created successfully in folder UID '$folder_uid'"
-  else
-    logme "err" "Failed to create dashboard in folder UID '$folder_uid'"
-    logme "err" "Response: $response"
-  fi
-}
+# Transfer dashboards
+for dashboard_uid in $dashboard_uids; do
+    transfer_dashboard $dashboard_uid
+done
 
-function logme() {
-  NC="\033[0m"
-  case $1 in
-    "err") COLOR="\e[31m";;
-    "info") COLOR="\033[0;32m";;
-    *) COLOR="\033[0m";;
-  esac
-  echo -e "${COLOR} $2 ${NC}"
-}
-
-pullFolders
-createFolders
-pullDashboards
+echo "Transfer complete."
