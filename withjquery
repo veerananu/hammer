@@ -80,9 +80,16 @@ done
 dashboards=$(curl -s -H "Authorization: $API_KEY_SOURCE" "${SOURCE_GRAFANA_URL}/api/search?query=&type=dash-db")
 dashboard_uids=$(echo $dashboards | jq -r '.[].uid')
 
-# Transfer dashboards to the specified folder
-for dashboard_uid in $dashboard_uids; do
-    transfer_dashboard $dashboard_uid
+# Transfer dashboards in batches of 10
+batch_size=10
+dashboard_uids_array=($dashboard_uids)
+total_dashboards=${#dashboard_uids_array[@]}
+
+for ((i=0; i<$total_dashboards; i+=$batch_size)); do
+    batch=("${dashboard_uids_array[@]:$i:$batch_size}")
+    for dashboard_uid in "${batch[@]}"; do
+        transfer_dashboard $dashboard_uid
+    done
 done
 
 echo "Transfer complete."
