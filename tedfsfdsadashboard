@@ -40,6 +40,7 @@ function createFolders() {
       logme "info" "Folder '$title' created successfully"
     else
       logme "err" "Failed to create folder '$title'"
+      logme "err" "Response: $response"
     fi
   done
 }
@@ -83,6 +84,7 @@ function createDashboard() {
     logme "info" "Dashboard created successfully in folder UID '$folder_uid'"
   else
     logme "err" "Failed to create dashboard in folder UID '$folder_uid'"
+    logme "err" "Response: $response"
   fi
 }
 
