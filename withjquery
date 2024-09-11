@@ -15,9 +15,9 @@ transfer_folder() {
         folder_uid=$(echo $folder | jq -r .uid)
         folder_payload=$(jq -n --arg title "$folder_name" --arg uid "$folder_uid" '{"title":$title, "uid":$uid}')
         curl -s -H "Authorization: $API_KEY_TARGET" -H "Content-Type: application/json" -X POST -d "$folder_payload" "${TARGET_GRAFANA_URL}/api/folders" > /dev/null
-        echo "Transferred folder: $folder_name"
+        echo -e "\e[32mTransferred folder: $folder_name\e[0m"
     else
-        echo "Folder with UID $folder_uid not found on source."
+        echo -e "\e[31mFolder with UID $folder_uid not found on source.\e[0m"
     fi
 }
 
@@ -32,7 +32,7 @@ transfer_dashboard() {
     if [ ! -z "$dashboard" ]; then
         dashboard_json=$(echo $dashboard | jq -r .dashboard | jq '.id=null')
         if [ -z "$dashboard_json" ]; then
-            echo "Failed to retrieve dashboard JSON for UID: $dashboard_uid"
+            echo -e "\e[31mFailed to retrieve dashboard JSON for UID: $dashboard_uid\e[0m"
             return
         fi
         
@@ -57,14 +57,13 @@ transfer_dashboard() {
         response_body=$(echo "$response" | sed 's/HTTP_STATUS:[0-9]\+//')
 
         if [ "$http_status" -eq 200 ]; then
-            echo "Transferred dashboard: $dashboard_title"
+            echo -e "\e[32mTransferred dashboard: $dashboard_title\e[0m"
         else
-            echo "Failed to transfer dashboard: $dashboard_title. HTTP Status: $http_status"
+            echo -e "\e[31mFailed to transfer dashboard: $dashboard_title. HTTP Status: $http_status\e[0m"
             echo "Response: $response_body"
-            echo "Payload: $dashboard_payload"
         fi
     else
-        echo "Dashboard with UID $dashboard_uid not found on source."
+        echo -e "\e[31mDashboard with UID $dashboard_uid not found on source.\e[0m"
     fi
 }
 
