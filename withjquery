@@ -44,21 +44,19 @@ transfer_dashboard() {
         echo "Dashboard JSON: $dashboard_json"
         echo "Folder UID: $folder_uid"
 
-        # Split the dashboard JSON into smaller chunks
-        dashboard_chunks=$(echo "$dashboard_json" | jq -c '. | to_entries | .[] | {(.key): .value}')
+        # Use temporary files for storing large JSON payloads
+        tmp_dashboard_file=$(mktemp)
+        tmp_payload_file=$(mktemp)
+        echo "$dashboard_json" > "$tmp_dashboard_file"
 
-        # Prepare the payload in chunks
-        dashboard_payload="{\"dashboard\":{"
-        for chunk in $dashboard_chunks; do
-            dashboard_payload+=$(echo "$chunk" | jq -c '. | to_entries | .[] | "\"\(.key)\":\(.value),"')
-        done
-        dashboard_payload+="\"id\":null},\"folderUid\":\"$folder_uid\",\"overwrite\":true}"
+        # Prepare dashboard payload with target folder UID
+        jq -n --argjson dashboard "$(<$tmp_dashboard_file)" --arg folderUid "$folder_uid" '{"dashboard":$dashboard,"folderUid":$folderUid,"overwrite":true}' > "$tmp_payload_file"
 
         # Debug: Print the payload
-        echo "Dashboard Payload: $dashboard_payload"
+        cat "$tmp_payload_file"
 
         # Create or update the dashboard on the target Grafana instance
-        response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -H "Authorization: $API_KEY_TARGET" -H "Content-Type: application/json" -X POST -d "$dashboard_payload" "${TARGET_GRAFANA_URL}/api/dashboards/db")
+        response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -H "Authorization: $API_KEY_TARGET" -H "Content-Type: application/json" -X POST -d @"$tmp_payload_file" "${TARGET_GRAFANA_URL}/api/dashboards/db")
         
         http_status=$(echo "$response" | grep "HTTP_STATUS" | awk -F':' '{print $2}')
         response_body=$(echo "$response" | sed 's/HTTP_STATUS:[0-9]\+//')
@@ -69,6 +67,9 @@ transfer_dashboard() {
             echo -e "\e[31mFailed to transfer dashboard: $dashboard_title. HTTP Status: $http_status\e[0m"
             echo "Response: $response_body"
         fi
+
+        # Clean up temporary files
+        rm -f "$tmp_dashboard_file" "$tmp_payload_file"
     else
         echo -e "\e[31mDashboard with UID $dashboard_uid not found on source.\e[0m"
     fi
@@ -85,10 +86,10 @@ done
 
 # Get all dashboards from the source Grafana instance
 dashboards=$(curl -s -H "Authorization: $API_KEY_SOURCE" "${SOURCE_GRAFANA_URL}/api/search?query=&type=dash-db")
+dashboard_uids=$(echo $dashboards | jq -r '.[].uid')
 
 # Transfer dashboards one at a time
-echo "$dashboards" | jq -c '.[]' | while read -r dashboard; do
-    dashboard_uid=$(echo "$dashboard" | jq -r .uid)
+for dashboard_uid in $dashboard_uids; do
     transfer_dashboard $dashboard_uid
 done
 
