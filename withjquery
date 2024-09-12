@@ -21,7 +21,7 @@ transfer_folder() {
     fi
 }
 
-# Updated Function to transfer a dashboard
+# Function to transfer a dashboard
 transfer_dashboard() {
     local dashboard_uid=$1
     echo "Attempting to transfer dashboard with UID: $dashboard_uid"
@@ -45,12 +45,10 @@ transfer_dashboard() {
         echo "Folder UID: $folder_uid"
 
         # Use temporary files for storing large JSON payloads
-        tmp_dashboard_file=$(mktemp)
         tmp_payload_file=$(mktemp)
-        echo "$dashboard_json" > "$tmp_dashboard_file"
-
-        # Prepare dashboard payload with target folder UID
-        jq -n --argjson dashboard "$(<$tmp_dashboard_file)" --arg folderUid "$folder_uid" '{"dashboard":$dashboard,"folderUid":$folderUid,"overwrite":true}' > "$tmp_payload_file"
+        
+        # Create the payload JSON manually
+        echo "{ \"dashboard\": $(echo $dashboard_json | jq -c .), \"folderUid\": \"$folder_uid\", \"overwrite\": true }" > "$tmp_payload_file"
 
         # Debug: Print the payload
         cat "$tmp_payload_file"
@@ -68,8 +66,8 @@ transfer_dashboard() {
             echo "Response: $response_body"
         fi
 
-        # Clean up temporary files
-        rm -f "$tmp_dashboard_file" "$tmp_payload_file"
+        # Clean up temporary file
+        rm -f "$tmp_payload_file"
     else
         echo -e "\e[31mDashboard with UID $dashboard_uid not found on source.\e[0m"
     fi
