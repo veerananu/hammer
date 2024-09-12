@@ -67,14 +67,14 @@ transfer_dashboard() {
     fi
 }
 
-# Get all folders from the source Grafana instance
+# Get all folders from the source Grafana instance and process one by one
 curl -s -H "Authorization: $API_KEY_SOURCE" "${SOURCE_GRAFANA_URL}/api/folders" | jq -r '.[].uid' | while read -r folder_uid; do
     transfer_folder $folder_uid
 done
 
-# Get all dashboards from the source Grafana instance
-curl -s -H "Authorization: $API_KEY_SOURCE" "${SOURCE_GRAFANA_URL}/api/search?query=&type=dash-db" | jq -r '.[].uid' | while read -r dashboard_uid; do
+# Get all dashboards one by one from the source Grafana instance and transfer
+while IFS= read -r dashboard_uid; do
     transfer_dashboard $dashboard_uid
-done
+done < <(curl -s -H "Authorization: $API_KEY_SOURCE" "${SOURCE_GRAFANA_URL}/api/search?query=&type=dash-db" | jq -r '.[].uid')
 
 echo "Transfer complete."
