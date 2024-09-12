@@ -24,14 +24,24 @@ transfer_folder() {
 transfer_dashboard() {
     local dashboard_uid=$1
     dashboard=$(curl -s -H "Authorization: $API_KEY_SOURCE" "${SOURCE_GRAFANA_URL}/api/dashboards/uid/${dashboard_uid}")
+
     if [ ! -z "$dashboard" ]; then
-        dashboard_json=$(echo $dashboard | grep -Po '"dashboard":\K.*(?=,"meta")')
-        dashboard_json=$(echo $dashboard_json | sed 's/"id":[0-9]\+,/"id":null,/')
+        # Extract the dashboard JSON and set the "id" to null for creating on target
+        dashboard_json=$(echo $dashboard | grep -Po '"dashboard":\K.*(?=,"meta")' | sed 's/"id":[0-9]\+,/"id":null,/')
+
+        # If dashboard_json is empty, something went wrong
+        if [ -z "$dashboard_json" ]; then
+            echo -e "\e[31mFailed to retrieve or parse dashboard JSON for UID: $dashboard_uid\e[0m"
+            return
+        fi
+        
         dashboard_title=$(echo $dashboard_json | grep -Po '"title":"\K[^"]*')
         folder_uid=$(echo $dashboard | grep -Po '"folderUid":"\K[^"]*')
 
+        # Prepare the payload for creating the dashboard on the target instance
         dashboard_payload=$(printf '{"dashboard":%s,"folderUid":"%s","overwrite":true}' "$dashboard_json" "$folder_uid")
 
+        # Send the dashboard payload to the target Grafana instance
         response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -H "Authorization: $API_KEY_TARGET" -H "Content-Type: application/json" -X POST -d "$dashboard_payload" "${TARGET_GRAFANA_URL}/api/dashboards/db")
         
         http_status=$(echo "$response" | grep "HTTP_STATUS" | awk -F':' '{print $2}')
