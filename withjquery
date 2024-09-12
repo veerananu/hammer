@@ -21,7 +21,7 @@ transfer_folder() {
     fi
 }
 
-# Updated Function to transfer a dashboard
+# Function to transfer a dashboard
 transfer_dashboard() {
     local dashboard_uid=$1
     echo "Attempting to transfer dashboard with UID: $dashboard_uid"
@@ -68,19 +68,12 @@ transfer_dashboard() {
 }
 
 # Get all folders from the source Grafana instance
-folders=$(curl -s -H "Authorization: $API_KEY_SOURCE" "${SOURCE_GRAFANA_URL}/api/folders")
-folder_uids=$(echo $folders | jq -r '.[].uid')
-
-# Transfer folders
-for folder_uid in $folder_uids; do
+curl -s -H "Authorization: $API_KEY_SOURCE" "${SOURCE_GRAFANA_URL}/api/folders" | jq -r '.[].uid' | while read -r folder_uid; do
     transfer_folder $folder_uid
 done
 
 # Get all dashboards from the source Grafana instance
-dashboards=$(curl -s -H "Authorization: $API_KEY_SOURCE" "${SOURCE_GRAFANA_URL}/api/search?query=&type=dash-db")
-
-# Transfer dashboards one at a time
-echo "$dashboards" | jq -r '.[].uid' | while read -r dashboard_uid; do
+curl -s -H "Authorization: $API_KEY_SOURCE" "${SOURCE_GRAFANA_URL}/api/search?query=&type=dash-db" | jq -r '.[].uid' | while read -r dashboard_uid; do
     transfer_dashboard $dashboard_uid
 done
 
