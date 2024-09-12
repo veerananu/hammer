@@ -56,7 +56,7 @@ transfer_dashboard() {
         http_status=$(echo "$response" | grep "HTTP_STATUS" | awk -F':' '{print $2}')
         response_body=$(echo "$response" | sed 's/HTTP_STATUS:[0-9]\+//')
 
-        if [ "$http_status" -eq 200 ]; then
+        if [ "$http_status" -eq 200]; then
             echo -e "\e[32mTransferred dashboard: $dashboard_title\e[0m"
         else
             echo -e "\e[31mFailed to transfer dashboard: $dashboard_title. HTTP Status: $http_status\e[0m"
@@ -80,16 +80,9 @@ done
 dashboards=$(curl -s -H "Authorization: $API_KEY_SOURCE" "${SOURCE_GRAFANA_URL}/api/search?query=&type=dash-db")
 dashboard_uids=$(echo $dashboards | jq -r '.[].uid')
 
-# Transfer dashboards in batches of 10
-batch_size=10
-dashboard_uids_array=($dashboard_uids)
-total_dashboards=${#dashboard_uids_array[@]}
-
-for ((i=0; i<$total_dashboards; i+=$batch_size)); do
-    batch=("${dashboard_uids_array[@]:$i:$batch_size}")
-    for dashboard_uid in "${batch[@]}"; do
-        transfer_dashboard $dashboard_uid
-    done
+# Transfer dashboards one at a time
+for dashboard_uid in $dashboard_uids; do
+    transfer_dashboard $dashboard_uid
 done
 
 echo "Transfer complete."
