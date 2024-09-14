@@ -1,1 +1,13 @@
-command: ['sh', '-c', 'echo "global:\n  scrape_interval: 15s\nscrape_configs:\n  - job_name: \'your-job\'\n    static_configs:\n      - targets: [\'localhost:your-port\']\n    relabel_configs:\n      - source_labels: [__address__]\n        target_label: instance\n        replacement: $POD_IP" > /etc/config/scrape-config.yaml && /path/to/vmagent']
+command: ['sh', '-c', 'cat <<EOF > /etc/config/scrape-config.yaml\n\
+global:\n\
+  scrape_interval: 15s\n\
+scrape_configs:\n\
+  - job_name: "your-job"\n\
+    static_configs:\n\
+      - targets: ["localhost:your-port"]\n\
+    relabel_configs:\n\
+      - source_labels: ["__address__"]\n\
+        target_label: "instance"\n\
+        replacement: "$POD_IP"\n\
+EOF\n\
+/path/to/vmagent']
