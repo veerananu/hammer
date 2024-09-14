@@ -1,13 +1,1 @@
-command: ['sh', '-c', 'cat <<EOF > /etc/config/scrape-config.yaml\n\
-global:\n\
-  scrape_interval: 15s\n\
-scrape_configs:\n\
-  - job_name: "your-job"\n\
-    static_configs:\n\
-      - targets: ["localhost:your-port"]\n\
-    relabel_configs:\n\
-      - source_labels: ["__address__"]\n\
-        target_label: "instance"\n\
-        replacement: "$POD_IP"\n\
-EOF\n\
-/path/to/vmagent']
+- "echo 'scrape_configs:\n- job_name: example\n  static_configs:\n  - targets: [localhost:8080]\n    labels:\n      pod_ip: ${POD_IP}' > /etc/vmagent/config.yaml"
