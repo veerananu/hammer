@@ -1,1 +1,1 @@
-[{"job_name":"example-job", "scrape_interval":"30s", "metrics_path":"/metrics", "static_configs":[{"targets":["localhost:9090"],"labels":{"pod_ip":"${POD_IP}"}}]}]'
+command: ['sh', '-c', 'echo "global:\n  scrape_interval: 15s\nscrape_configs:\n  - job_name: \'your-job\'\n    static_configs:\n      - targets: [\'localhost:your-port\']\n    relabel_configs:\n      - source_labels: [__address__]\n        target_label: instance\n        replacement: $POD_IP" > /etc/config/scrape-config.yaml && /path/to/vmagent']
