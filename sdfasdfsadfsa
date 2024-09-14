@@ -1,0 +1,1 @@
+ ['sh', '-c', 'echo "global:\n  scrape_interval: 15s\nscrape_configs:\n  - job_name: \'your-job\'\n    static_configs:\n      - targets: [\'$POD_IP:your-port\']" > /etc/config/scrape-config.yaml && /path/to/vmagent']
