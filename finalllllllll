@@ -1,9 +1,1 @@
-        - >-
-          -config.scrape_configs=[
-            {"job_name":"example-job",
-            "scrape_interval":"30s",
-            "metrics_path":"/metrics",
-            "static_configs":[
-              {"targets":["localhost:9090"],
-              "labels":{"pod_ip":"${POD_IP}"}}]
-            }]
+[{"job_name":"example-job", "scrape_interval":"30s", "metrics_path":"/metrics", "static_configs":[{"targets":["localhost:9090"],"labels":{"pod_ip":"${POD_IP}"}}]}]'
