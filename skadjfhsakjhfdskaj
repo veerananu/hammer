@@ -1,0 +1,7 @@
+      - |
+        echo "Template content before envsubst:" > /etc/vmagent/debug.log
+        cat /etc/vmagent/config.yaml.template >> /etc/vmagent/debug.log
+        echo "POD_IP=${POD_IP}" >> /etc/vmagent/debug.log
+        envsubst < /etc/vmagent/config.yaml.template > /etc/vmagent/config.yaml
+        echo "Config content after envsubst:" >> /etc/vmagent/debug.log
+        cat /etc/vmagent/config.yaml >> /etc/vmagent/debug.log
