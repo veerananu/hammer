@@ -104,3 +104,8 @@ echo "Transfer complete."
 
         jq -n --argjson dashboard "$dashboard_json" --arg folderUid "$folder_uid" '{"dashboard": $dashboard, "folderUid": $folderUid, "overwrite": true}' > "$tmp_payload_file"
 
+dashboard_payload=$(jq -n --argjson dashboard "$dashboard_json" --arg folderUid "$folder_uid" '{"dashboard": $dashboard, "folderUid": $folderUid, "overwrite": true}')
+
+# Write the payload to a temporary file
+echo "$dashboard_payload" > "$tmp_payload_file"
+
