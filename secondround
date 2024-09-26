@@ -1,0 +1,97 @@
+#!/bin/bash
+
+# Variables
+SOURCE_GRAFANA_URL="http://source-grafana-instance.com"
+TARGET_GRAFANA_URL="http://target-grafana-instance.com"
+API_KEY_SOURCE="Bearer YOUR_SOURCE_API_KEY"
+API_KEY_TARGET="Bearer YOUR_TARGET_API_KEY"
+
+# Function to transfer a folder
+transfer_folder() {
+    local folder_uid=$1
+    folder=$(curl -s -H "Authorization: $API_KEY_SOURCE" "${SOURCE_GRAFANA_URL}/api/folders/${folder_uid}")
+    if [ ! -z "$folder" ]; then
+        folder_name=$(echo $folder | jq -r .title)
+        folder_uid=$(echo $folder | jq -r .uid)
+        folder_payload=$(jq -n --arg title "$folder_name" --arg uid "$folder_uid" '{"title":$title, "uid":$uid}')
+        curl -s -H "Authorization: $API_KEY_TARGET" -H "Content-Type: application/json; charset=utf-8" -X POST -d "$folder_payload" "${TARGET_GRAFANA_URL}/api/folders" > /dev/null
+        echo -e "\e[32mTransferred folder: $folder_name\e[0m"
+    else
+        echo -e "\e[31mFolder with UID $folder_uid not found on source.\e[0m"
+    fi
+}
+
+# Function to transfer a dashboard
+transfer_dashboard() {
+    local dashboard_uid=$1
+    echo "Attempting to transfer dashboard with UID: $dashboard_uid"
+    
+    dashboard=$(curl -s -H "Authorization: $API_KEY_SOURCE" "${SOURCE_GRAFANA_URL}/api/dashboards/uid/${dashboard_uid}")
+    echo "Dashboard JSON: $dashboard"
+    
+    if [ ! -z "$dashboard" ]; then
+        dashboard_json=$(echo $dashboard | jq -r .dashboard | jq '.id=null')
+        
+        # Check if the dashboard JSON is valid
+        if ! echo "$dashboard_json" | jq . > /dev/null 2>&1; then
+            echo -e "\e[31mInvalid JSON detected for dashboard UID: $dashboard_uid\e[0m"
+            return
+        fi
+
+        dashboard_title=$(echo $dashboard_json | jq -r .title)
+        dashboard_uid=$(echo $dashboard_json | jq -r .uid)
+        folder_uid=$(echo $dashboard | jq -r .meta.folderUid)
+
+        # Debug: Print the dashboard JSON and folder UID
+        echo "Dashboard JSON: $dashboard_json"
+        echo "Folder UID: $folder_uid"
+
+        # Use temporary files for storing large JSON payloads
+        tmp_payload_file=$(mktemp)
+        
+        # Create the payload JSON manually
+        echo "{ \"dashboard\": $(echo $dashboard_json | jq -c .), \"folderUid\": \"$folder_uid\", \"overwrite\": true }" > "$tmp_payload_file"
+
+        # Debug: Print the payload
+        echo "Payload JSON for dashboard $dashboard_uid:"
+        cat "$tmp_payload_file"
+
+        # Create or update the dashboard on the target Grafana instance
+        response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -H "Authorization: $API_KEY_TARGET" -H "Content-Type: application/json; charset=utf-8" -X POST -d @"$tmp_payload_file" "${TARGET_GRAFANA_URL}/api/dashboards/db")
+        
+        http_status=$(echo "$response" | grep "HTTP_STATUS" | awk -F':' '{print $2}')
+        response_body=$(echo "$response" | sed 's/HTTP_STATUS:[0-9]\+//')
+
+        if [ "$http_status" -eq 200 ]; then
+            echo -e "\e[32mTransferred dashboard: $dashboard_title\e[0m"
+        else
+            echo -e "\e[31mFailed to transfer dashboard: $dashboard_title. HTTP Status: $http_status\e[0m"
+            echo "Response: $response_body"
+        fi
+
+        # Clean up temporary file
+        rm -f "$tmp_payload_file"
+    else
+        echo -e "\e[31mDashboard with UID $dashboard_uid not found on source.\e[0m"
+    fi
+}
+
+# Get all folders from the source Grafana instance
+folders=$(curl -s -H "Authorization: $API_KEY_SOURCE" "${SOURCE_GRAFANA_URL}/api/folders")
+folder_uids=$(echo $folders | jq -r '.[].uid')
+
+# Transfer folders
+for folder_uid in $folder_uids; do
+    transfer_folder $folder_uid
+done
+
+# Get all dashboards from the source Grafana instance
+dashboards=$(curl -s -H "Authorization: $API_KEY_SOURCE" "${SOURCE_GRAFANA_URL}/api/search?query=&type=dash-db")
+dashboard_uids=$(echo $dashboards | jq -r '.[].uid')
+
+# Transfer dashboards one at a time
+for dashboard_uid in $dashboard_uids; do
+    transfer_dashboard $dashboard_uid
+done
+
+echo "Transfer complete."
