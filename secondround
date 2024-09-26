@@ -100,3 +100,7 @@ for dashboard_uid in $dashboard_uids; do
 done
 
 echo "Transfer complete."
+
+
+        jq -n --argjson dashboard "$dashboard_json" --arg folderUid "$folder_uid" '{"dashboard": $dashboard, "folderUid": $folderUid, "overwrite": true}' > "$tmp_payload_file"
+
