@@ -109,3 +109,4 @@ dashboard_payload=$(jq -n --argjson dashboard "$dashboard_json" --arg folderUid 
 # Write the payload to a temporary file
 echo "$dashboard_payload" > "$tmp_payload_file"
 
+        echo "$dashboard_json" | jq --arg folderUid "$folder_uid" '. + { folderUid: $folderUid, overwrite: true }' > "$tmp_payload_file"
