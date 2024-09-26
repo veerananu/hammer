@@ -80,6 +80,11 @@ transfer_dashboard() {
 folders=$(curl -s -H "Authorization: $API_KEY_SOURCE" "${SOURCE_GRAFANA_URL}/api/folders")
 folder_uids=$(echo $folders | jq -r '.[].uid')
 
+
+
+echo "Checking for '*' in queries:"
+echo "$dashboard_json" | jq '.panels[].targets[]?.expr' | grep '*'
+
 # Transfer folders
 for folder_uid in $folder_uids; do
     transfer_folder $folder_uid
