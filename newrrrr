@@ -1,0 +1,6 @@
+Latency: Measure the time taken for each API request and response.
+Success/Failure Rate: Capture how many of the API calls succeed vs. fail.
+Error Types: Record details of specific error types (e.g., 4xx, 5xx) for each API.
+Request Rate: Monitor how many requests per second are hitting your API servers.
+Throughput: Track the volume of data being processed through each API call.
+Timeouts: Keep track of any API requests that time out or exceed their maximum allowed response time.
