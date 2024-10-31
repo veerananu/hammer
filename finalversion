@@ -1,0 +1,86 @@
+import math
+
+def reward_function(params):
+    ################## INPUT PARAMETERS ###################
+    track_width = params['track_width']
+    distance_from_center = params['distance_from_center']
+    steering = abs(params['steering_angle'])
+    speed = params['speed']
+    steps = params['steps']
+    is_offtrack = params['is_offtrack']
+    progress = params['progress']
+    all_wheels_on_track = params['all_wheels_on_track']
+    
+    # Initialize reward
+    reward = 1.0
+    
+    # Thresholds
+    MAX_SPEED = 4.0                # Target maximum speed
+    SPEED_THRESHOLD_STRAIGHT = 3.5  # High speed threshold on straights
+    SPEED_THRESHOLD_CURVE = 2.1     # Moderate speed threshold for curves
+    STEERING_THRESHOLD = 20.0       # Tolerate moderate steering adjustments
+    DIRECTION_THRESHOLD = 7.0       # Smaller threshold to classify curves
+    
+    # Penalty for going off-track
+    if is_offtrack:
+        return 1e-3  # Immediate large penalty if off-track
+    
+    # Reward for keeping all wheels on the track
+    if all_wheels_on_track:
+        reward += 2.0  # Large bonus for staying on track
+    else:
+        reward *= 0.5  # Penalize if any wheel is off
+    
+    # Reward for staying near the center of the track
+    if distance_from_center <= 0.1 * track_width:
+        reward += 2.0  # Higher reward for staying near the center
+    elif distance_from_center <= 0.25 * track_width:
+        reward += 1.0  # Moderate reward for staying somewhat close
+    else:
+        reward *= 0.5  # Penalize for being far from the center
+    
+    # Calculate the direction of the center line
+    waypoints = params['waypoints']
+    closest_waypoints = params['closest_waypoints']
+    next_point = waypoints[closest_waypoints[1]]
+    prev_point = waypoints[closest_waypoints[0]]
+    track_direction = math.atan2(next_point[1] - prev_point[1], next_point[0] - prev_point[0])
+    track_direction = math.degrees(track_direction)
+    
+    # Calculate the difference between the car's heading and the track direction
+    heading = params['heading']
+    direction_diff = abs(track_direction - heading)
+    if direction_diff > 180:
+        direction_diff = 360 - direction_diff
+    
+    # Speed and direction: reward high speed on straights and moderate speed on curves
+    if direction_diff < DIRECTION_THRESHOLD:
+        # Straight section: Strong reward for max speed
+        if speed >= SPEED_THRESHOLD_STRAIGHT:
+            reward += 3.0  # High reward for achieving near-maximum speed
+        else:
+            reward += 1.5  # Smaller reward for somewhat slower speeds
+    else:
+        # Curved section: Encourage moderate speed
+        if speed <= SPEED_THRESHOLD_CURVE:
+            reward += 1.5  # Reward for controlled speed on curves
+        else:
+            reward *= 0.7  # Penalize excessive speed on curves to avoid going off-track
+    
+    # Minimal penalty for large steering angles to encourage smoother navigation
+    if steering > STEERING_THRESHOLD:
+        reward *= 0.95  # Slightly reduce penalty for necessary adjustments on curves
+    
+    # Reward for speed as a function of max speed
+    speed_reward = (speed / MAX_SPEED) ** 2  # Exponential growth for higher speeds
+    reward += speed_reward  # Add proportional speed reward
+    
+    # Reward for making continuous progress
+    if progress == 100:
+        reward += 100  # Big reward for completing the lap
+    
+    # Incremental progress reward
+    if steps % 50 == 0 and progress > (steps / 15) * 100:
+        reward += 5.0  # Reward for steady forward progress
+    
+    return float(reward)
