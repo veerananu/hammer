@@ -1,0 +1,3 @@
+At 10:25, a profile-related issue was identified, marked by an MDC error message in both data centers. Investigation revealed that the pods were scaling up but were unable to process requests in the profile application, leading to a CPU spike. This scaling resulted in five pods running concurrently in each data center.
+
+During this time, the CDP system reported a Gateway Timeout error. Restarting the pods resolved the issue. However, while CDP successfully transmitted the GUID, the profile application reported missing key-value pairs.
