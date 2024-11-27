@@ -1,0 +1,9 @@
+Lower the CPU threshold from 98% to 70% to enable faster pod scaling during the process of draining pods from another data center.
+
+We need to perform load testing for individual callsdfsafsfder profiles at each data center before migrating to ATL. This will help determine if our application requires additional resources.
+
+Caller profile scraping is failing at the application-level metrics.
+
+Remove the route URL from OpenShift as it is no longer required for access.
+
+We should conduct game days at least once a month and update the playbook accordingly. This will be beneficial for improving our processes.
