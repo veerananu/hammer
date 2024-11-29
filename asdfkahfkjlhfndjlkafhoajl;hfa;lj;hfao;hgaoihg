@@ -1,0 +1,13 @@
+Before migrating to vmagent, the following tasks need to be addressed:
+
+Migration of SNMP Application:
+
+Ensure the successful migration of the SNMP application.
+Create an egress IP for the corresponding namespace.
+Collaborate with the voice team to gain access to the scrape targets.
+Coordination with the Voice Team:
+
+Work closely with the voice team to facilitate the migration of the assdf project to the new cluster.
+Firewall Request with the Call Team:
+
+Collaborate with the call team to raise a firewall request using the newly created egress IP.
