@@ -1,0 +1,90 @@
+To provide a cost analysis for running the YACE (Yet Another CloudWatch Exporter) exporter with a vmagent sidecar on Amazon EKS Fargate, along with CloudWatch API calls for metrics, let's break down the cost components.
+
+AWS Cost Components
+Amazon EKS Fargate Costs:
+
+Fargate vCPU and Memory Costs:
+
+Fargate pricing is based on the vCPU and memory resources allocated per pod.
+For example, in the US East (N. Virginia) region, the prices are:
+vCPU: $0.04048 per vCPU per hour
+Memory: $0.004445 per GB per hour
+Calculation Example: If you allocate 1 vCPU and 2GB of memory to each pod (YACE + vmagent sidecar), the hourly cost would be:
+
+bash
+Copy code
+(1 vCPU x $0.04048) + (2 GB x $0.004445) = $0.04937 per hour
+Multiply this by the number of pods and hours per month (e.g., 730 hours for continuous usage).
+
+Amazon CloudWatch API Costs:
+
+GetMetricData and GetMetricStatistics API Calls:
+
+CloudWatch charges $0.01 per 1,000 GetMetricData requests.
+Metric data retention and access can also incur minor costs, depending on the requested granularity.
+YACE will frequently call these APIs to fetch metrics.
+Estimation: If YACE makes 10,000 API requests daily, the monthly cost would be:
+
+bash
+Copy code
+(10,000 requests/day x 30 days) / 1,000 x $0.01 = $3/month
+Adjust the estimate based on the actual frequency of calls and number of metrics fetched.
+
+Amazon EKS Cluster Costs:
+
+Managed EKS clusters cost $0.10 per hour.
+If the cluster is used exclusively for this purpose, the monthly cost is:
+bash
+Copy code
+$0.10/hour x 730 hours = $73/month
+Additional costs for nodes are covered under Fargate pricing.
+Data Transfer Costs:
+
+CloudWatch to EKS Fargate:
+There are no additional data transfer charges for CloudWatch API calls within the same AWS region.
+EKS Fargate to VictoriaMetrics (On-Prem):
+Outbound data transfer from AWS to on-prem costs:
+$0.09 per GB for the first 10TB per month.
+Estimate the total data sent by vmagent to VictoriaMetrics to calculate this cost.
+Other Costs:
+
+Storage for Configurations:
+Minimal S3 costs for storing configuration files (if applicable).
+Example Monthly Cost Estimate (Hypothetical)
+Cost Component	Estimated Monthly Cost
+EKS Fargate (2 pods)	$72.88
+CloudWatch API Requests	$3
+EKS Cluster Fee	$73
+Data Transfer to On-Prem	$45 (500GB)
+Total	~$193.88/month
+Notes:
+Adjust based on:
+The number of pods (scale-up costs proportionally).
+CloudWatch API request frequency.
+Data transfer volume to VictoriaMetrics.
+Use the AWS Pricing Calculator for precise estimation with real usage data.
+
+
+
+
+
+You said:
+Amazon CloudWatch API Costs:
+ give me document for that
+ChatGPT said:
+ChatGPT
+
+Searched 5 sites
+Amazon CloudWatch API costs depend on the specific API calls made, such as GetMetricData, ListMetrics, and others used for retrieving and analyzing metrics. These API calls are billed based on the volume and type of data processed.
+
+Here is a breakdown:
+
+GetMetricData API Call: This is commonly used to retrieve CloudWatch metrics. The cost is calculated per 1,000 requests. This operation is particularly efficient when retrieving large amounts of data over time, as it supports metric math and batched queries.
+
+ListMetrics API Call: This is used to fetch available metrics and dimensions for your queries. Charges are applied per 1,000 requests.
+
+Ingested and Stored Metrics: CloudWatch also incurs costs for the ingestion, storage, and retrieval of metrics. Metrics are stored at a rate based on their retention period and volume.
+
+For a complete breakdown of the pricing, refer to the official Amazon CloudWatch Pricing page【10】【12】.
+
+Additionally, using YACE CloudWatch exporter to fetch metrics will likely increase these costs based on the frequency and scope of API calls. You can estimate the costs by calculating the number of API requests per scrape and multiplying it by the request cost. If you need help setting up an estimation model, let me know!
