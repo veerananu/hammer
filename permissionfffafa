@@ -1,0 +1,122 @@
+
+To stream metrics from Account A to an S3 bucket in Account B via Kinesis Firehose, you need to grant minimal permissions to Kinesis Firehose for interacting with the S3 bucket in Account B. Here's how you can achieve it with the least privileges:
+
+1. S3 Bucket Policy in Account B
+This policy allows Firehose in Account A to write metrics to the S3 bucket in Account B.
+
+json
+Copy code
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {
+                "AWS": "arn:aws:iam::ACCOUNT-A:role/Firehose-Delivery-Role"
+            },
+            "Action": [
+                "s3:PutObject",
+                "s3:AbortMultipartUpload",
+                "s3:ListBucketMultipartUploads",
+                "s3:GetBucketLocation",
+                "s3:ListBucket"
+            ],
+            "Resource": [
+                "arn:aws:s3:::bucket-name",
+                "arn:aws:s3:::bucket-name/*"
+            ],
+            "Condition": {
+                "StringEquals": {
+                    "s3:x-amz-acl": "bucket-owner-full-control"
+                }
+            }
+        }
+    ]
+}
+Explanation:
+Principal:
+Allows the IAM role Firehose-Delivery-Role from Account A to access the bucket.
+Actions:
+s3:PutObject: Allows Firehose to upload objects.
+s3:AbortMultipartUpload: Cleans up failed multipart uploads.
+s3:ListBucketMultipartUploads: Lists ongoing multipart uploads for error handling.
+s3:GetBucketLocation: Verifies the bucket’s region.
+s3:ListBucket: Lists the bucket for validation.
+Condition:
+Ensures that Firehose uploads objects with bucket-owner-full-control to avoid ownership conflicts.
+2. IAM Role in Account A for Firehose
+This role allows Firehose to assume the role and interact with S3 in Account B.
+
+Trust Policy (Assigned to Account B’s Role):
+Allows the Firehose-Delivery-Role from Account A to assume the role in Account B.
+
+json
+Copy code
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {
+                "Service": "firehose.amazonaws.com"
+            },
+            "Action": "sts:AssumeRole",
+            "Condition": {
+                "StringEquals": {
+                    "aws:SourceAccount": "ACCOUNT-A"
+                },
+                "ArnLike": {
+                    "aws:SourceArn": "arn:aws:firehose:REGION:ACCOUNT-A:deliverystream/delivery-stream-name"
+                }
+            }
+        }
+    ]
+}
+3. IAM Role Permissions in Account A
+The IAM role Firehose-Delivery-Role in Account A requires the following permissions to write data to the S3 bucket in Account B.
+
+json
+Copy code
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": "sts:AssumeRole",
+            "Resource": "arn:aws:iam::ACCOUNT-B:role/Role-To-Access-S3-Bucket"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "logs:PutLogEvents",
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream"
+            ],
+            "Resource": "arn:aws:logs:REGION:ACCOUNT-A:log-group:/aws/kinesisfirehose/*"
+        }
+    ]
+}
+Minimal Permissions Recap
+In Account B (S3 Bucket Policy):
+
+s3:PutObject, s3:AbortMultipartUpload, s3:ListBucketMultipartUploads, s3:GetBucketLocation, s3:ListBucket.
+Restrict access to the Firehose-Delivery-Role from Account A.
+In Account A (IAM Role):
+
+Add the ability to assume a role in Account B (sts:AssumeRole).
+Allow logging actions to CloudWatch Logs (logs:PutLogEvents).
+In Account B (Trust Policy):
+
+Allow firehose.amazonaws.com to assume the role with proper conditions for the delivery stream.
+How It Works
+Firehose in Account A:
+Streams metrics to the S3 bucket in Account B by assuming the cross-account role.
+S3 in Account B:
+Grants write permissions to the bucket for Firehose while ensuring bucket owner control.
+This setup minimizes the permissions needed while ensuring secure cross-account access. Let me know if you need further clarification or additional configurations!
+
+
+
+
+
+
