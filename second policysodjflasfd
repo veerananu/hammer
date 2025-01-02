@@ -1,0 +1,64 @@
+IAM Role in Account A (For Firehose Delivery)
+This role grants Firehose in Account A permission to assume the cross-account role in Account B and stream metrics to the S3 bucket.
+
+json
+Copy code
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": "sts:AssumeRole",
+            "Resource": "arn:aws:iam::ACCOUNT-B:role/Role-To-Access-S3-Bucket"
+        }
+    ]
+}
+Explanation
+sts:AssumeRole:
+This allows the Firehose delivery role in Account A to assume the cross-account role in Account B.
+The role in Account B grants Firehose access to the destination S3 bucket for metrics delivery.
+Bucket Policy in Account B
+To allow Firehose in Account A to write to the S3 bucket in Account B:
+
+json
+Copy code
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {
+                "AWS": "arn:aws:iam::ACCOUNT-A:role/Firehose-Delivery-Role"
+            },
+            "Action": [
+                "s3:PutObject",
+                "s3:AbortMultipartUpload",
+                "s3:ListBucketMultipartUploads",
+                "s3:GetBucketLocation",
+                "s3:ListBucket"
+            ],
+            "Resource": [
+                "arn:aws:s3:::bucket-name",
+                "arn:aws:s3:::bucket-name/*"
+            ],
+            "Condition": {
+                "StringEquals": {
+                    "s3:x-amz-acl": "bucket-owner-full-control"
+                }
+            }
+        }
+    ]
+}
+How This Works
+Firehose in Account A:
+
+Uses the sts:AssumeRole action to assume the cross-account role in Account B.
+Cross-Account Role in Account B:
+
+Grants permissions for Firehose to interact with the S3 bucket in Account B (via the bucket policy).
+S3 Bucket in Account B:
+
+Accepts uploads from the Firehose delivery role in Account A, ensuring proper object ownership with bucket-owner-full-control.
+Final Notes
+If you don’t need CloudWatch Logs, you can remove the logs actions from the original policy.
+The minimal permissions setup focuses purely on enabling cross-account delivery of metrics to S3 without any additional logging or debugging permissions.
