@@ -1,0 +1,68 @@
+Here’s a quote focused solely on CloudWatch Metric Streams and Amazon Kinesis Data Firehose for delivery to an HTTP endpoint. The costs are based on AWS pricing.
+
+1. CloudWatch Metric Streams
+Cost: $0.03 per 1,000 metric updates.
+Example:
+If you send 10 million metric updates per month:
+10
+,
+000
+,
+000
+×
+0.03
+1
+,
+000
+=
+$
+300
+10,000,000× 
+1,000
+0.03
+​
+ =$300
+2. Amazon Kinesis Data Firehose
+Cost Components:
+Data Ingestion: $0.029 per GB.
+
+Example:
+If 1 TB (1,024 GB) of data is ingested:
+1
+,
+024
+×
+0.029
+=
+$
+29.70
+1,024×0.029=$29.70
+Delivery to HTTP Endpoint:
+
+Delivery costs are included in ingestion costs.
+Data Transformation (optional):
+
+$0.01 per GB.
+Example:
+If 50% of the data (512 GB) is transformed:
+512
+×
+0.01
+=
+$
+5.12
+512×0.01=$5.12
+Total Monthly Cost Estimate
+For 10 million metric updates and 1 TB (1,024 GB) of data delivered:
+
+CloudWatch Metric Streams: $300
+Kinesis Data Firehose:
+Data Ingestion: $29.70
+Optional Transformation: $5.12 (if enabled)
+Total Without Transformation: $329.70/month
+Total With Transformation: $334.82/month
+
+Notes:
+This estimate excludes data transfer out costs because you specified HTTP endpoint delivery via Firehose (no additional charges for endpoint delivery within Firehose).
+If you have exact data volumes or different configurations, the numbers can be adjusted.
+Let me know if you need further clarification or adjustments!
