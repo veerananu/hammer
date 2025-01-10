@@ -1,0 +1,177 @@
+First Architecture: Direct HTTP Posting to vectordotdev
+1. IAM Role for Metric Stream
+Purpose: Grants permission to send filtered metrics to Firehose.
+Key Configuration:
+Add an inclusion filter in the metric stream to capture only relevant metrics.
+IAM Policy:
+json
+Copy code
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "firehose:PutRecord",
+        "firehose:PutRecordBatch"
+      ],
+      "Resource": "<Firehose-Delivery-Stream-ARN>"
+    }
+  ]
+}
+2. IAM Role for Firehose
+Purpose: Allows Firehose to:
+Write failed records to an S3 bucket.
+Deliver valid metrics to vectordotdev.
+IAM Policy:
+json
+Copy code
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:ListBucket"
+      ],
+      "Resource": "<S3-Bucket-ARN>/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "firehose:Deliver",
+      "Resource": "<Firehose-Delivery-Stream-ARN>"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "arn:aws:logs:<region>:<account-id>:log-group:/aws/kinesisfirehose/*"
+    }
+  ]
+}
+3. HTTP Destination Authorization
+Purpose: Authenticate Firehose to post metrics to vectordotdev.
+Implementation:
+Use an API key or token for vectordotdev.
+Securely store the token in the Firehose configuration (or in AWS Secrets Manager).
+Second Architecture: Lambda Processing via S3
+1. IAM Role for Metric Stream
+Same as in the first architecture:
+json
+Copy code
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "firehose:PutRecord",
+        "firehose:PutRecordBatch"
+      ],
+      "Resource": "<Firehose-Delivery-Stream-ARN>"
+    }
+  ]
+}
+2. IAM Role for Firehose
+Same as in the first architecture:
+json
+Copy code
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:ListBucket"
+      ],
+      "Resource": "<S3-Bucket-ARN>/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "firehose:Deliver",
+      "Resource": "<Firehose-Delivery-Stream-ARN>"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "arn:aws:logs:<region>:<account-id>:log-group:/aws/kinesisfirehose/*"
+    }
+  ]
+}
+3. IAM Role for Lambda
+Purpose: Grants Lambda permission to:
+Read metric data from the S3 bucket.
+Post filtered metrics to vectordotdev.
+IAM Policy:
+json
+Copy code
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:ListBucket"
+      ],
+      "Resource": "<S3-Bucket-ARN>/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "arn:aws:logs:<region>:<account-id>:log-group:/aws/lambda/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:GetSecretValue"
+      ],
+      "Resource": "arn:aws:secretsmanager:<region>:<account-id>:secret:<secret-name>"
+    }
+  ]
+}
+4. HTTP Authorization for vectordotdev
+Purpose: Lambda needs access to post metrics to vectordotdev.
+Implementation:
+Use an API key securely stored in AWS Secrets Manager.
+Lambda retrieves the key at runtime and uses it for authentication.
+Additional Notes for Both Architectures:
+Metric Filtering:
+
+Apply metric stream filters to capture only relevant metrics.
+json
+Copy code
+{
+  "IncludeMetrics": [
+    {
+      "Namespace": "AWS/EC2",
+      "MetricNames": ["CPUUtilization", "DiskReadOps"]
+    },
+    {
+      "Namespace": "AWS/Lambda",
+      "MetricNames": ["Duration", "Invocations"]
+    }
+  ]
+}
+Monitoring and Logs:
+
+Enable CloudWatch logs for both Firehose and Lambda to track data processing.
+Use a CloudWatch Metric Filter to identify if logs are accidentally included.
+Security Best Practices:
+
+Follow the least privilege principle for all IAM roles.
+Rotate API keys periodically and secure them using Secrets Manager.
+Use IAM condition keys to restrict access to specific services or environments.
+Would you like help setting up the filtering, creating sample policies, or writing Lambda code?
