@@ -1,0 +1,39 @@
+Cost Analysis for Architectures
+ Assumptions:- Metrics: 500 metrics filtered every minute.- Data Size: Each metric event = 1 KB.- Monthly Duration: 43,200 minutes (30 days × 24 hours × 60 minutes).- Total Data: 0.5 MB/min × 43,200 = 21.6 GB/month.--
+First Architecture:
+ 1. CloudWatch Metric Streams:
+   - Total updates: 500 × 43,200 = 21,600,000 updates.
+   - Cost: 21,600,000 / 1,000 × 0.003 = 64.8 USD/month.
+ 2. Kinesis Firehose (HTTP Delivery):
+   - Data ingestion: 21.6 GB.
+   - Cost: 21.6 × 0.029 = 0.63 USD/month.
+ 3. S3 Storage (for 2 days retention):
+   - Stored data: 21.6 GB/month ÷ 15 = 1.44 GB/day.
+   - Cost for 2 days: 1.44 × 2 × 0.023 = 0.066 USD/month.
+ Total Monthly Cost (First Architecture):
+ 65.5 USD/month
+--
+Second Architecture:
+ 1. CloudWatch Metric Streams:
+   - Total updates: 21,600,000.
+   - Cost: 64.8 USD/month.
+ 2. Kinesis Firehose (S3 Delivery):
+   - Data ingestion: 21.6 GB.
+   - Cost: 21.6 × 0.029 = 0.63 USD/month.
+ 3. S3 Storage (for 7 days retention):
+   - Stored data: 21.6 GB/month ÷ 4.3 = 5.02 GB/day.
+   - Cost for 7 days: 5.02 × 7 × 0.023 = 0.81 USD/month.
+ 4. Lambda Execution:
+   - Total invocations: 21,600.
+   - Execution time: 5 seconds/event.
+   - Memory: 128 MB.
+     - Compute cost:
+       21,600 × 5 × (128 / 1,024) × 0.0000166667 = 22.1 USD/month.
+     - Invocation cost:
+       21,600 ÷ 1,000,000 × 0.20 = 0.0043 USD/month.
+ Total Monthly Cost (Second Architecture):
+ 88.34 USD/month
+--
+Cost Comparison:- First Architecture: 65.5 USD/month.- Second Architecture: 88.34 USD/month (with 5s/event Lambda execution).
+ Key Notes:- The first architecture is more cost-effective, but the second architecture provides longer storage
+ retention and additional processing flexibility
