@@ -1,0 +1,91 @@
+[
+  {
+    "resourceMetrics": [
+      {
+        "resource": {
+          "attributes": [
+            { "key": "service.name", "value": { "stringValue": "my-api" } }
+          ]
+        },
+        "scopeMetrics": [
+          {
+            "scope": {
+              "name": "my-api-library",
+              "version": "1.0.0"
+            },
+            "metrics": [
+              {
+                "name": "http.requests.total",
+                "description": "Total number of HTTP requests",
+                "unit": "1",
+                "data": {
+                  "sum": {
+                    "dataPoints": [
+                      {
+                        "attributes": [
+                          { "key": "http.method", "value": { "stringValue": "GET" } }
+                        ],
+                        "value": 100
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]
+
+
+
+
+
+
+
+
+Components Explained
+
+resourceMetrics:
+
+An array (list) of ResourceMetrics objects.
+Each ResourceMetrics object groups together all the metrics coming from a single resource.
+resource:
+
+A Resource object within ResourceMetrics.
+Contains key-value pairs (attributes) that identify the resource. For example:
+"service.name": "my-web-server"
+"host.name": "server-123"
+"cloud.region": "us-central1"
+scopeMetrics:
+
+An array of ScopeMetrics objects within ResourceMetrics.
+Each ScopeMetrics object groups together metrics that share the same instrumentation scope.
+scope:
+
+A Scope object within ScopeMetrics.
+Identifies the instrumentation library that generated the metrics. It typically includes:
+"name": "my-python-library"
+"version": "1.2.3"
+metrics:
+
+An array of Metric objects within ScopeMetrics.
+This is where the actual metric definitions reside.
+name:
+
+A string representing the name of the metric (e.g., "http.requests.total").
+description:
+
+A string providing a human-readable description of the metric.
+unit:
+
+A string specifying the unit of measurement (e.g., "seconds", "bytes", "requests").
+data:
+
+This is where the metric values are stored. The structure of data depends on the type of metric:
+Sum: Monotonically increasing counter (e.g., total number of requests).
+Gauge: A value that can go up or down (e.g., current CPU usage).
+Histogram: Distributions of values (e.g., request latency).
+Summary: Similar to histograms, but with quantile information.
