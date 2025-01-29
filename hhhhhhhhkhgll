@@ -1,0 +1,120 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+exporters:
+  prometheus:
+    endpoint: 0.0.0.0:8889  # The address/port where the Collector's metrics will be scraped
+    namespace: "otelcol"   # Optional: Add a namespace for your metrics
+    # resource_to_telemetry_conversion: # Optional: Enable to add resource attributes as labels
+    #   enabled: true
+    send_timestamps: true  # Optional: Send timestamps for metrics
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]       # Receive metrics via OTLP
+      processors: [batch]    # Batch metrics before exporting
+      exporters: [prometheus] # Export metrics in Prometheus format
+
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otelcol-config
+data:
+  otelcol.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+
+    processors:
+      batch:
+
+    exporters:
+      logging:
+        verbosity: detailed  # Adjust log level as needed
+      jaeger:
+        endpoint: jaeger-collector.my-namespace.svc.cluster.local:14250 # Replace with your Jaeger endpoint
+        # tls:
+        #   insecure: true # If not using TLS
+
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [logging, jaeger]
+        metrics:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [logging]
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otelcol
+spec:
+  replicas: 1 # Adjust the number of replicas as needed
+  selector:
+    matchLabels:
+      app: otelcol
+  template:
+    metadata:
+      labels:
+        app: otelcol
+    spec:
+      containers:
+        - name: otelcol
+          image: otel/opentelemetry-collector-contrib:latest # Or a specific version
+          command:
+            - "/otelcol-contrib"
+            - "--config=/conf/otelcol.yaml"
+          ports:
+            - containerPort: 4317 # OTLP gRPC
+            - containerPort: 4318 # OTLP HTTP
+            - containerPort: 8888 # Metrics exporter (if you are using Prometheus)
+            - containerPort: 8889 # Prometheus exporter
+          volumeMounts:
+            - name: config-volume
+              mountPath: /conf
+          resources:  # Adjust resource limits as needed
+            limits:
+              cpu: "1"
+              memory: 2Gi
+            requests:
+              cpu: 200m
+              memory: 400Mi
+      volumes:
+        - name: config-volume
+          configMap:
+            name: otelcol-config
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: otelcol-collector
+spec:
+  selector:
+    app: otelcol
+  ports:
+    - name: otlp-grpc
+      protocol: TCP
+      port: 4317
+      targetPort: 4317
+    - name: otlp-http
+      protocol: TCP
+      port: 4318
+      targetPort: 4318
+    - name: metrics # If you are using Prometheus exporter
+      protocol: TCP
+      port: 8889
+      targetPort: 8889
