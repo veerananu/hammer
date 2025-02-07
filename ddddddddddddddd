@@ -1,0 +1,13 @@
+Problem: Traditional methods of retrieving CloudWatch metrics using the GetMetricData API can be slow.
+Solution: CloudWatch Metric Streams, in conjunction with Amazon Data Firehose, allows near real-time streaming of metrics to Datadog. This offers up to 80% latency reduction.
+How it works:
+Data Firehose Setup: Create a Firehose delivery stream in AWS, configuring it to send data to Datadog using your Datadog API key. Specific buffer and retry settings are recommended.
+CloudWatch Metric Stream Setup: Create a Metric Stream in CloudWatch, selecting the AWS services and metrics you want to monitor. Direct this stream to the Firehose delivery stream you created. Choose the OpenTelemetry output format.
+Benefits:
+Lower Latency: Faster access to metrics, enabling quicker identification and resolution of issues.
+Comprehensive Monitoring: Combines low-latency metrics with Datadog's log ingestion via Firehose for a holistic view of AWS service health.
+Improved Troubleshooting: Enables faster feedback on the effectiveness of deployed fixes.
+Example: The article highlights the importance of low-latency ELB monitoring, particularly for metrics like HTTP error rates, request volume, and latency. Quickly identifying issues like backend latency spikes and surge queue length allows for prompt action and prevents dropped requests.
+Implementation: The article provides instructions for setting up both Data Firehose and CloudWatch Metric Streams, including using a CloudFormation template for quick setup. It also mentions Datadog's AWS integration tile for verifying stream configuration.
+Next Steps: The article encourages readers to explore Datadog's documentation, register for a related webinar, or start a free trial.
+
