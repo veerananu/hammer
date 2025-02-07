@@ -1,0 +1,6 @@
+CloudWatch Metric Streams facilitate continuous metric streaming to various AWS accounts.  Using a Kinesis Data Firehose delivery stream, metrics can be delivered to an S3 bucket in a different account.  From there, an S3 event notification can trigger a Lambda function, which retrieves the metrics from S3 and posts them to an OpenTelemetry collector running on OpenShift.
+
+ This  designed for read-only access to dashboards, metrics, logs, and traces in a central location. It's not a full data transfer mechanism.
+ 
+ 
+  This process (e.g., a Lambda function, an EC2 instance) in the target account that periodically calls the CloudWatch GetMetricData or GetMetricStatistics API in the source account to retrieve metrics.
