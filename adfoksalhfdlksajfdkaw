@@ -1,0 +1,58 @@
+This document explains how to set up AWS CloudWatch Metric Streams with Amazon Data Firehose to send CloudWatch metrics to Datadog with low latency (2-3 minutes).  This is much faster than the default 10-minute latency of Datadog's API polling.
+
+Here's a breakdown of the key points:
+
+How it works: You create a CloudWatch Metric Stream in each AWS account and region you want to monitor, optionally filtering by namespace or metric. Datadog then receives these streamed metrics automatically.
+Metric Streaming vs. API Polling:
+Latency: Streaming is significantly faster (2-3 minutes) than polling (10 minutes).
+Namespace Filtering: Filtering for streaming is done within the CloudWatch Metric Stream configuration, not in the Datadog AWS integration tile. The AWS integration tile filtering only applies to API polling.
+Delayed Metrics: Metrics with a delay of more than two hours (e.g., S3 bucket size, billing) are still collected via API polling, even with streaming enabled, as they can't be sent through Metric Streams.
+Switching: Datadog automatically switches from polling to streaming for a namespace when you set up streaming. It also automatically reverts to polling if streaming is disabled. You don't need to change your existing AWS integration settings in Datadog.
+Billing: Datadog doesn't charge extra for streaming, but AWS charges for metric updates and data volume sent to Firehose. Streaming could increase your AWS CloudWatch costs. Therefore, it's recommended to use streaming only for metrics where low latency is critical.
+Setup:
+Prerequisites: You need to have your AWS account connected to Datadog.
+Methods: CloudFormation (recommended) or AWS Console. CloudFormation is preferred for multi-region setups.
+Steps (CloudFormation): Go to the AWS integration page in Datadog, choose the account, and click "Automatically Using CloudFormation" to launch a stack in the AWS console. Provide your Datadog API key, site, and the regions to stream. You can also specify namespaces to include or exclude.
+Cross-Account Metric Streaming: Allows you to collect metrics from multiple AWS accounts into a single Metric Stream in a "monitoring account." This simplifies management. Requires specific IAM permissions in the monitoring account. You still need to connect the source accounts to Datadog for custom tags and metadata.
+Disabling: Requires deleting the CloudWatch Metric Stream and related resources (e.g., Firehose delivery stream, IAM roles). The process differs slightly depending on whether you used CloudFormation or the AWS Console to set up streaming.
+Troubleshooting: Refer to AWS troubleshooting documentation.
+In short, this document provides a comprehensive guide to setting up and managing CloudWatch Metric Streams for faster metric ingestion into Datadog.  It emphasizes the benefits, considerations (especially cost), and step-by-step instructions for implementation.
+
+
+
+
+
+
+how do we know datadog using polling or streaming
+
+
+Unfortunately, Datadog doesn't explicitly state in the UI whether it's using polling or streaming for a specific metric. However, you can infer it based on a few factors:
+
+1. Latency:
+
+Streaming: Metrics ingested via CloudWatch Metric Streams have a latency of 2-3 minutes.   
+Polling: Metrics collected via API polling have a latency of approximately 10 minutes.
+If you observe a metric updating much faster than every 10 minutes, it's likely being streamed.
+
+2. Metric Source:
+
+CloudWatch Metric Streams: Metrics ingested this way will generally have a source that indicates they are from a "Metric Stream."
+API Polling: Metrics collected via API polling will usually have a source that indicates they are from the "CloudWatch API."
+3. AWS Integration Page:
+
+In the Datadog AWS integration page, under the "Metric Collection" tab, you can see which AWS accounts and regions have "CloudWatch Metric Streams" enabled. If a region is listed there, it means that at least some metrics from that region are being streamed.
+4. Namespace Filtering:
+
+Remember that namespace filtering configured in the AWS Integration tile only applies to API polling. If you've configured specific namespace filters in your CloudWatch Metric Stream configuration within AWS, those will indicate that streaming is being used for those namespaces.
+5. Metrics with >2 Hour Delay:
+
+Metrics that report with more than a 2-hour delay (like aws.s3.bucket_size_bytes and aws.billing.estimated_charges) will always be collected via API polling, even if you have Metric Streams enabled.
+Important Notes:
+
+Datadog automatically switches between polling and streaming for a given namespace. If you set up a Metric Stream for a namespace that was previously being polled, Datadog will stop polling that namespace and start streaming it.   
+Some metrics might be a combination of both. For example, the actual metric data might be streamed, while custom tags and other metadata for that metric might still be collected via API polling.
+If you're still unsure, the best way to confirm is to contact Datadog support. They can provide definitive information about how specific metrics are being collected.
+
+
+
+Sources and related content
