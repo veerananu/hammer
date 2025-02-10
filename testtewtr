@@ -1,0 +1,18 @@
+The SLO category that a cache failure falls under depends on how it impacts your users and the specific SLOs you have defined for your service. Here are some possibilities:
+
+1. Availability:
+
+Impact: If the cache failure leads to your application becoming unavailable or significantly degraded for users, it would fall under the Availability SLO category.
+Example: "Ensure 99.9% of user requests result in a successful response." If cache failures cause a significant portion of requests to fail, this SLO would be impacted.
+2. Latency:
+
+Impact: If the cache failure increases the response time of your application, it would fall under the Latency SLO category.
+Example: "Ensure 95% of user requests are served within 500ms." If cache misses due to the failure cause slower response times, this SLO would be affected.
+3. Correctness:
+
+Impact: In some cases, cache failures can lead to incorrect data being served to users. This would fall under the Correctness SLO category.
+Example: "Ensure 99.99% of search results are relevant to the user query." If the cache failure results in outdated or incorrect data being served in search results, this SLO would be impacted.
+4. Freshness:
+
+Impact: If your application relies on the cache to provide up-to-date information, a cache failure could impact the Freshness SLO.
+Example: "Ensure data is updated in the cache within 1 minute of a change." If the cache failure prevents timely updates, this SLO would be affected.
