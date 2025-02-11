@@ -1,0 +1,9 @@
+Stress Test Day:
+
+Failure percentage: 0.43%
+Without Stress Test:
+
+Failure percentages: 0.14%, 0.15%, 0.29%
+Analysis:
+
+It appears there's a significantly higher failure rate on the day with the stress test (0.43%) compared to the days without the stress test (ranging from 0.14% to 0.29%).
