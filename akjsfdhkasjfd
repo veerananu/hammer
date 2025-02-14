@@ -1,0 +1,42 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::ACCOUNT_A_ID:role/CloudWatchToFirehoseRole" // <-- REPLACE with the ARN of the CloudWatchToFirehoseRole in Account A
+      },
+      "Action": "sts:AssumeRole",
+      "Condition": {
+        "StringEquals": {
+          "sts:ExternalId": "YOUR_EXTERNAL_ID" // <-- REPLACE with the SAME External ID as above
+        }
+      }
+    }
+  ]
+}
+
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "firehose:PutRecord",  // Or "firehose:*" for all Firehose actions
+        "firehose:PutRecordBatch"
+      ],
+      "Resource": "arn:aws:firehose:REGION:ACCOUNT_B_ID:deliverystream/your-firehose-name"
+    }
+  ]
+}
+
+    {  // Permissions for the destination (e.g., S3)
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:PutObjectAcl" // If needed
+      ],
+      "Resource": "arn:aws:s3:::your-s3-bucket/*" // Replace with your S3 bucket ARN (or more specific prefix)
+    }
+  ]
+}
