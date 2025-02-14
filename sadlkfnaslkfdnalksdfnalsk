@@ -1,0 +1,40 @@
+%%{init: {'themeVariables': { 'scale': 8.0 }}}%%
+
+graph LR;
+  
+  subgraph Account_A["Account A (Source)"]
+    A1["<font color='#01579B' style='font-size:50px;'>CloudWatch Metric Stream</font>"] -->|Sends Metrics| A2["<font color='#388E3C' style='font-size:50px;'>CloudWatchToFirehoseRole</font>"]
+    A2 -->|Assume Role with External ID| R2
+  end
+
+  subgraph IAM_Roles["IAM Roles & Policies"]
+    R1["<font color='#512DA8' style='font-size:50px;'>CloudWatchToFirehoseRole</font>"]
+    R2["<font color='#D32F2F' style='font-size:50px;'>FirehoseDeliveryRole</font>"]
+    R1 -->|AssumeRole with External ID| R2
+  end
+
+  subgraph Account_B["Account B (Destination)"]
+    R2 -->|Allows Firehose Access| B1["<font color='#D84315' style='font-size:50px;'>Kinesis Firehose</font>"]
+    B1 -->|Writes Data| B2["<font color='#F57C00' style='font-size:50px;'>S3 Bucket</font>"]
+    B2 -->|Triggers| B3["<font color='#F9A825' style='font-size:50px;'>Lambda Function</font>"]
+  end
+
+  subgraph OnPrem["On-Premises (OpenTelemetry - OpenShift)"]
+    B3 -->|Posts Metrics| B4["<font color='#388E3C' style='font-size:50px;'>OpenTelemetry</font>"]
+    B4 -->|Processes Metrics| B5["<font color='#0288D1' style='font-size:50px;'>VictoriaMetrics</font>"]
+  end
+
+  %% Custom Colors for Actions
+  style A1 fill:#E1F5FE,stroke:#039BE5,stroke-width:8px, font-size:50px;
+  style A2 fill:#C5E1A5,stroke:#7B8D44,stroke-width:8px, font-size:50px;
+  
+  style R2 fill:#FFCCBC,stroke:#FF5722,stroke-width:8px, font-size:50px;
+  
+  style B1 fill:#FFEB3B,stroke:#FBC02D,stroke-width:8px, font-size:50px;
+  style B2 fill:#FFECB3,stroke:#F57C00,stroke-width:8px, font-size:50px;
+  style B3 fill:#FFF9C4,stroke:#FBC02D,stroke-width:8px, font-size:50px;
+  
+  style B4 fill:#C8E6C9,stroke:#388E3C,stroke-width:8px, font-size:50px;
+  style B5 fill:#BBDEFB,stroke:#1E88E5,stroke-width:8px, font-size:50px;
+  
+  style R1 fill:#D1C4E9,stroke:#512DA8,stroke-width:8px, font-size:50px;
