@@ -1,0 +1,6 @@
+graph LR
+    A[Account A - CloudWatch] --> B(CloudWatchToFirehoseRole)
+    B -- sts:AssumeRole --> C{Account B - FirehoseDeliveryRole Trust Policy}
+    C -- Allows Assumption --> D[Account B - FirehoseDeliveryRole]
+    D -- Grants Permissions --> E[Account B - Kinesis Firehose Stream]
+    A -- Sends Metrics --> E
