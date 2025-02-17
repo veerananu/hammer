@@ -1,0 +1,39 @@
+https://cloudchipr.com/blog/cloudwatch-pricing
+
+
+CloudWatch Metric Streams: You will be charged $0.003 per 1,000 metric updates. With 500 metrics per minute, this equates to 500 metrics/minute * 60 minutes/hour * 24 hours/day * 30 days/month = 21,600,000 metrics per month. Therefore, the monthly cost for metric streams would be 21,600,000 / 1,000 * $0.003 = $64.80
+
+https://aws.amazon.com/firehose/pricing/
+
+Kinesis Firehose: You are charged for the amount of data ingested into Kinesis Firehose. The pricing is tiered and depends on the source of the data. Since you are using CloudWatch Metric Streams as a source, there are no 5 KB increments for pricing. Assuming the first 500 TB/month tier, the cost is $0.029 per GB1. 
+
+S3 Bucket: You are charged for the amount of data stored in the S3 bucket. The pricing depends on the storage class you choose. For the first 50 TB/month of S3 Standard storage, the cost is $0.023 per GB1
+
+https://cloudchipr.com/blog/amazon-s3-pricing-explained
+Lambda Function: You are charged based on the number of requests and the duration of execution for your Lambda function1. The first 1 million requests are free, and after that, you pay $0.20 per 1 million requests. 
+
+
+
+Service	Account	Calculation	Monthly Cost	Notes
+CloudWatch Metric Streams	A	500 metrics/min * 60 min/hr * 24 hr/day * 30 days/month = 21,600,000 metrics/month 21,600,000 / 1,000 * $0.003 = $64.80	$64.80	
+Kinesis Firehose	B	Assuming each metric is 1 KB 21,600,000 metrics/month * 1 KB/metric = 21,600,000 KB/month = 21.09 GB/month 21.09 GB * $0.029/GB = $0.61	$0.61	[2
+S3 Bucket	B	Assuming data is stored in S3 Standard for 30 days with 100 KB per metric: 21.09 GB * $0.023/GB = $0.49	$0.49	[6
+Lambda Function	B	Number of invocations per month = 1 invocation/min * 60 min/hr * 24 hr/day * 30 days/month = 43,200 Compute charges = 43,200 invocations/month * 4 s/invocation * 512 MB / 1024 MB = 86,400 GB-seconds Request charges = 43,200 requests / 1,000,000 requests * $0.20 = $0.01 Total Lambda cost = 86,400 GB-seconds * $0.0000166667/GB-second + $0.01 = $1.45 [12[13]	$1.45	[7
+Data Transfer	A to B	Assuming 21.09 GB data transfer per month with $0.02/GB transfer cost: 21.09 GB * $0.02/GB = $0.42	$0.42
+
+Service	Account	Estimated Monthly Cost
+CloudWatch Metric Streams	A	$64.80
+Kinesis Firehose	B	$0.61
+S3 Bucket	B	$0.49
+Lambda Function	B	$1.45
+Data Transfer	A to B	$0.42
+Total		$67.77
+
+Service	Account	Calculation	Monthly Cost	Notes
+CloudWatch Metric Streams	A	5000 metrics/min * 60 min/hr * 24 hr/day * 30 days/month = 216,000,000 metrics/month 216,000,000 / 1,000 * $0.003 = $648	$648	
+Kinesis Firehose	B	Assuming each metric is 1 KB 216,000,000 metrics/month * 1 KB/metric = 216,000,000 KB/month = 210.94 GB/month 210.94 GB * $0.029/GB = $6.11	$6.11	
+S3 Bucket	B	Assuming data is stored in S3 Standard for 30 days with 100 KB per metric: 210.94 GB * $0.023/GB = $4.85	$4.85	
+Lambda Function	B	Number of invocations per month = 1 invocation/min * 60 min/hr * 24 hr/day * 30 days/month = 43,200 Compute charges = 43,200 invocations/month * 4 s/invocation * 512 MB / 1024 MB = 86,400 GB-seconds Request charges = 43,200 requests / 1,000,000 requests * $0.20 = $0.01 Total Lambda cost = 86,400 GB-seconds * $0.0000166667/GB-second + $0.01 = $1.45	$1.45	
+Data Transfer	A to B	Assuming 210.94 GB data transfer per month with $0.02/GB transfer cost: 210.94 GB * $0.02/GB = $4.22	$4.22	
+  
+Total = $648 + $6.11 + $4.85 + $1.45 + $4.22 = $664.63
