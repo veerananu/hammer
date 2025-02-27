@@ -1,0 +1,8 @@
+graph LR
+    A[dat] -->|success| B[data controller]
+    A -->|failure| C[failure]
+    B --> D[request service]
+    D --> E[data service]
+    E --> F[depo]
+    E --> G[pay]
+    E --> H[fraud]
