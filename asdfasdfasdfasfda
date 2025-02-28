@@ -1,0 +1,37 @@
+Stress Tests: 99.11% and 99.76%—both solid, with the second edging out. The API can take a hit and stay up.
+Normal Days: 98.19% (weak), 99.76%, 99.83% (stellar). Two out of three are near-perfect, even at 1M+ requests.
+
+First Stress Test Day: 1,320,709 - 11,788 = 1,308,921
+Second Stress Test Day: 761,663 - 1,848 = 759,815
+First Normal Day: 156,441 - 2,824 = 153,617
+Second Normal Day: 1,488,396 - 2,477 = 1,485,919
+Third Normal Day: 1,188,154 - 2,870 = 1,185,284
+
+First Stress Test: 1,308,921 ÷ 86,400 = 15.15 RPS
+Second Stress Test: 759,815 ÷ 86,400 = 8.79 RPS
+First Normal Day: 153,617 ÷ 86,400 = 1.78 RPS
+Second Normal Day: 1,485,919 ÷ 86,400 = 17.20 RPS
+Third Normal Day: 1,185,284 ÷ 86,400 = 13.72 RPS
+
+Step 3: Updated Summary Based on Availability
+Overall Stats
+Total Successful Requests: 1,308,921 + 153,617 + 1,485,919 + 1,185,284 + 759,815 = 4,893,556
+Total Requests: 1,320,709 + 156,441 + 1,488,396 + 1,188,154 + 761,663 = 4,915,363
+Overall Availability: (4,893,556 ÷ 4,915,363) × 100 = 99.56%
+
+By Day
+Second Normal Day (99.83%):
+Volume: 1,488,396 (highest)
+Takeaway: Still the champ—near-perfect at max volume.
+Second Stress Test Day (99.76%):
+Volume: 761,663 (lowest of the high-volume days)
+Takeaway: Excellent under stress—matches the third normal day and beats the first stress test.
+Third Normal Day (99.76%):
+Volume: 1,188,154
+Takeaway: Tied with the new stress test—super reliable at high volume.
+First Stress Test Day (99.11%):
+Volume: 1,320,709
+Takeaway: Good, but the weakest of the high-volume days. Still above 99%.
+First Normal Day (98.19%):
+Volume: 156,441 (lowest)
+Takeaway: Remains the outlier—below 99% with light traffic.
