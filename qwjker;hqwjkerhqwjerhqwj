@@ -1,0 +1,18 @@
+Latency Breakdown (>5s Failures)
+Stress Test Day 1: 6,467 slow / 1,308,921 total
+% Slow: 0.50%
+% Fast (<5s): 99.50%
+Stress Test Day 2: 1,456 slow / 759,815 total
+% Slow: 0.19%
+% Fast (<5s): 99.81%
+Normal Day 1: 556 slow / 1,560,617 total
+% Slow: 0.04%
+% Fast (<5s): 99.96%
+Normal Day 2: 480 slow / 1,235,752 total
+% Slow: 0.04%
+% Fast (<5s): 99.96%
+Latency Takeaways
+Normal Days: 99.96% of requests are <5s—only 0.04% (1 in 2,500) take longer. Latency is near-perfect.
+Stress Tests: 99.50% (Day 1) to 99.81% (Day 2) are <5s—0.19% to 0.50% exceed 5s. Day 1 lags more (1 in 200 slow) than Day 2 (1 in 500).
+Worst Case: Stress Test Day 1—0.50% slow (6,467 requests). Highest latency issues under load.
+Best Case: Normal Days—0.04% slow (480-556 requests). Barely any latency problems.
