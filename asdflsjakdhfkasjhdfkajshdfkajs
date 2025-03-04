@@ -1,0 +1,16 @@
+Performance Report: Data API Analysis for February 2025
+Availability Metrics
+An analysis of the Data API's availability metrics for the month of February revealed the following error distribution:
+
+70% of the errors logged were attributed to HTTP 400 (Bad Request) and 401 (Unauthorized) errors.
+The remaining errors consisted of HTTP 500 (Internal Server Error), 503 (Service Unavailable), and 504 (Gateway Timeout) errors, originating from the upstream API.
+No availability issues were identified with the Data API itself during this period.
+
+Resource Utilization Review
+A review of CPU and memory usage was conducted for both stress days and normal operational days. The results indicate that resource utilization remained below threshold levels, with no evidence of throttling observed.
+
+Throughput Analysis
+The throughput of the Data API was assessed, with recorded values ranging from 8 requests per second (RPS) to 18 RPS. This presents an opportunity to optimize and increase the throughput capacity of the API to enhance performance.
+
+Latency Analysis
+Latency analysis for the Data API in February identified two specific experiences that exhibited prolonged request processing times, notably related to the "Order Details" functionality. Further investigation into these delays is recommended to improve response times.
