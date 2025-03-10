@@ -1,0 +1,143 @@
+openapi: 3.0.0
+info:
+  title: OpenTelemetry Metrics Receiver API
+  description: API for receiving OpenTelemetry metrics via HTTP/JSON
+  version: 1.0.0
+servers:
+  - url: http://localhost:4318
+    description: Default local endpoint for the OpenTelemetry Collector OTLP receiver
+paths:
+  /v1/metrics:
+    post:
+      summary: Post metrics data
+      description: |
+        Endpoint to receive OpenTelemetry metrics data in JSON format, conforming to the OTLP 
+        (OpenTelemetry Protocol) specification serialized as JSON. This is used by the 
+        OpenTelemetry Collector’s OTLP receiver to ingest metrics.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: |
+                The JSON-serialized `ExportMetricsServiceRequest` message as defined in the OTLP 
+                specification. For the full structure, refer to 
+                [metrics_service.proto](https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/collector/metrics/v1/metrics_service.proto).
+            example: |
+              {
+                "resourceMetrics": [
+                  {
+                    "resource": {
+                      "attributes": [
+                        {
+                          "key": "service.name",
+                          "value": {
+                            "stringValue": "my-service"
+                          }
+                        }
+                      ]
+                    },
+                    "scopeMetrics": [
+                      {
+                        "scope": {
+                          "name": "my-library",
+                          "version": "1.0.0"
+                        },
+                        "metrics": [
+                          {
+                            "name": "my_metric",
+                            "description": "A sample metric",
+                            "unit": "1",
+                            "sum": {
+                              "dataPoints": [
+                                {
+                                  "startTimeUnixNano": "1593781500000000000",
+                                  "timeUnixNano": "1593781500000000000",
+                                  "asInt": "10"
+                                }
+                              ],
+                              "aggregationTemporality": "AGGREGATION_TEMPORALITY_CUMULATIVE",
+                              "isMonotonic": true
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+      responses:
+        '200':
+          description: Metrics received successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                description: |
+                  The JSON-serialized `ExportMetricsServiceResponse` message as defined in the OTLP 
+                  specification. For the full structure, refer to 
+                  [metrics_service.proto](https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/collector/metrics/v1/metrics_service.proto). 
+                  An empty object `{}` may be returned if all metrics are accepted without issues.
+              example: |
+                {
+                  "partialSuccess": {
+                    "rejectedDataPoints": 0,
+                    "errorMessage": ""
+                  }
+                }
+        '400':
+          description: Bad request, e.g., invalid JSON or malformed OTLP data
+        '500':
+          description: Internal server error
+
+
+------------------
+
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "OpenTelemetry Metrics Receiver API",
+    "description": "API for receiving OpenTelemetry metrics via HTTP/JSON",
+    "version": "1.0.0"
+  },
+  "host": "localhost:4318",
+  "basePath": "/",
+  "schemes": ["http"],
+  "consumes": ["application/json"],
+  "produces": ["application/json"],
+  "paths": {
+    "/v1/metrics": {
+      "post": {
+        "summary": "Post metrics data",
+        "description": "Endpoint to receive OpenTelemetry metrics data in JSON format, conforming to the OTLP (OpenTelemetry Protocol) specification serialized as JSON.",
+        "parameters": [
+          {
+            "in": "body",
+            "name": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "description": "The JSON-serialized `ExportMetricsServiceRequest` message as defined in the OTLP specification.\n\nExample:\n```json\n{\n  \"resourceMetrics\": [\n    {\n      \"resource\": {\n        \"attributes\": [\n          {\n            \"key\": \"service.name\",\n            \"value\": {\n              \"stringValue\": \"my-service\"\n            }\n          }\n        ]\n      },\n      \"scopeMetrics\": [\n        {\n          \"scope\": {\n            \"name\": \"my-library\",\n            \"version\": \"1.0.0\"\n          },\n          \"metrics\": [\n            {\n              \"name\": \"my_metric\",\n              \"description\": \"A sample metric\",\n              \"unit\": \"1\",\n              \"sum\": {\n                \"dataPoints\": [\n                  {\n                    \"startTimeUnixNano\": \"1593781500000000000\",\n                    \"timeUnixNano\": \"1593781500000000000\",\n                    \"asInt\": \"10\"\n                  }\n                ],\n                \"aggregationTemporality\": \"AGGREGATION_TEMPORALITY_CUMULATIVE\",\n                \"isMonotonic\": true\n              }\n            }\n          ]\n        }\n      ]\n    }\n  ]\n}\n```"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Metrics received successfully\n\nExample response:\n```json\n{\n  \"partialSuccess\": {\n    \"rejectedDataPoints\": 0,\n    \"errorMessage\": \"\"\n  }\n}\n```",
+            "schema": {
+              "type": "object",
+              "description": "The JSON-serialized `ExportMetricsServiceResponse` message as defined in the OTLP specification."
+            }
+          },
+          "400": {
+            "description": "Bad request, e.g., invalid JSON or malformed data"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    }
+  }
+}
