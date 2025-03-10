@@ -1,0 +1,8 @@
+Aspect	OpenAPI 3.0	Swagger 2.0
+Version Identifier	openapi: 3.0.0	"swagger": "2.0"
+Server Information	servers array	host, basePath, schemes
+Request Body	requestBody object	parameters with in: "body"
+Response Definitions	content field with media type and schema	Direct schema under response codes
+Media Types	Embedded in requestBody and responses	Root-level consumes and produces
+Examples	Dedicated example field	Embedded in description as text
+Schema Descriptions	Separate description and example	Combi
