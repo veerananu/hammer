@@ -1,0 +1,191 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "OpenTelemetry Metrics Receiver API",
+    "description": "API for receiving OpenTelemetry metrics via HTTP/JSON",
+    "version": "1.0.0"
+  },
+  "host": "localhost:4318",
+  "basePath": "/",
+  "schemes": ["http"],
+  "consumes": ["application/json"],
+  "produces": ["application/json"],
+  "securityDefinitions": {
+    "apiKey": {
+      "type": "apiKey",
+      "name": "X-API-Key",
+      "in": "header",
+      "description": "API key required to authenticate requests to the OpenTelemetry Metrics Receiver API."
+    }
+  },
+  "paths": {
+    "/v1/metrics": {
+      "post": {
+        "summary": "Post metrics data",
+        "description": "Endpoint to receive OpenTelemetry metrics data in JSON format, conforming to the OTLP (OpenTelemetry Protocol) specification serialized as JSON.",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "body",
+            "name": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "description": "The JSON-serialized `ExportMetricsServiceRequest` message as defined in the OTLP specification. For the full structure, refer to [metrics_service.proto](https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/collector/metrics/v1/metrics_service.proto).",
+              "example": {
+                "resourceMetrics": [
+                  {
+                    "resource": {
+                      "attributes": [
+                        {
+                          "key": "service.name",
+                          "value": {
+                            "stringValue": "my-service"
+                          }
+                        },
+                        {
+                          "key": "aws.account.id",
+                          "value": {
+                            "stringValue": "149536493833"
+                          }
+                        },
+                        {
+                          "key": "aws.region",
+                          "value": {
+                            "stringValue": "us-east-1"
+                          }
+                        }
+                      ]
+                    },
+                    "scopeMetrics": [
+                      {
+                        "scope": {
+                          "name": "my-library",
+                          "version": "1.0.0"
+                        },
+                        "metrics": [
+                          {
+                            "name": "VolumeIdleTimeMax",
+                            "description": "Maximum idle time of the EBS volume",
+                            "unit": "Seconds",
+                            "gauge": {
+                              "dataPoints": [
+                                {
+                                  "timeUnixNano": "1736142780000000000",
+                                  "asDouble": 59.990422,
+                                  "attributes": [
+                                    {
+                                      "key": "VolumeId",
+                                      "value": {
+                                        "stringValue": "vol-0e1750ccd74c1399d"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "name": "VolumeIdleTimeMin",
+                            "description": "Minimum idle time of the EBS volume",
+                            "unit": "Seconds",
+                            "gauge": {
+                              "dataPoints": [
+                                {
+                                  "timeUnixNano": "1736142780000000000",
+                                  "asDouble": 59.990422,
+                                  "attributes": [
+                                    {
+                                      "key": "VolumeId",
+                                      "value": {
+                                        "stringValue": "vol-0e1750ccd74c1399d"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "name": "VolumeIdleTimeSum",
+                            "description": "Total idle time of the EBS volume",
+                            "unit": "Seconds",
+                            "gauge": {
+                              "dataPoints": [
+                                {
+                                  "timeUnixNano": "1736142780000000000",
+                                  "asDouble": 59.990422,
+                                  "attributes": [
+                                    {
+                                      "key": "VolumeId",
+                                      "value": {
+                                        "stringValue": "vol-0e1750ccd74c1399d"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "name": "VolumeIdleTimeCount",
+                            "description": "Number of idle time measurements for the EBS volume",
+                            "unit": "1",
+                            "gauge": {
+                              "dataPoints": [
+                                {
+                                  "timeUnixNano": "1736142780000000000",
+                                  "asDouble": 1.0,
+                                  "attributes": [
+                                    {
+                                      "key": "VolumeId",
+                                      "value": {
+                                        "stringValue": "vol-0e1750ccd74c1399d"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Metrics received successfully",
+            "schema": {
+              "type": "object",
+              "description": "The JSON-serialized `ExportMetricsServiceResponse` message as defined in the OTLP specification. For the full structure, refer to [metrics_service.proto](https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/collector/metrics/v1/metrics_service.proto).",
+              "example": {
+                "partialSuccess": {
+                  "rejectedDataPoints": 0,
+                  "errorMessage": ""
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request, e.g., invalid JSON or malformed data"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing API key"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    }
+  }
+}
