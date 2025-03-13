@@ -1,0 +1,41 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"time"
+
+	"otel-metric-converter/internal/converter"
+	"otel-metric-converter/internal/models"
+)
+
+func main() {
+	// Read input data (from file or example data)
+	inputData, err := os.ReadFile("input.json") // Replace with command-line argument handling
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading input file: %v\n", err)
+		return
+	}
+
+	var inputs []models.InputMetric
+	if err := json.Unmarshal(inputData, &inputs); err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing input JSON: %v\n", err)
+		return
+	}
+
+	startTime := time.Now()
+
+	// Convert metrics
+	results := converter.ConvertToOTEL(inputs)
+
+	// Measure processing time
+	duration := time.Since(startTime)
+	fmt.Printf("Time taken: %v\n", duration)
+
+	// Print results
+	for i, result := range results {
+		resultJSON, _ := json.MarshalIndent(result, "", "  ")
+		fmt.Printf("Result %d:\n%s\n\n", i+1, resultJSON)
+	}
+}
