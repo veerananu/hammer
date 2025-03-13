@@ -1,0 +1,256 @@
+Folder Structure
+pgsql
+Copy
+Edit
+/otel-metrics-converter
+│── /cmd
+│   └── main.go             # Entry point for the application
+│── /internal
+│   ├── /models
+│   │   └── models.go       # Data models (InputMetric, ResourceMetrics, etc.)
+│   ├── /converter
+│   │   ├── converter.go    # Metric conversion logic
+│   │   ├── worker_pool.go  # Parallel processing logic
+│   ├── /utils
+│   │   └── utils.go        # Helper functions (sorting, timestamp conversion)
+│── /tests
+│   └── converter_test.go   # Unit tests for conversion logic
+│── go.mod
+│── README.md
+Code Breakdown
+1. /cmd/main.go (Entry Point)
+go
+Copy
+Edit
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"time"
+
+	"otel-metrics-converter/internal/converter"
+	"otel-metrics-converter/internal/models"
+)
+
+func main() {
+	// Read input from file or fallback to example JSON
+	var inputData []byte
+	var err error
+
+	if len(os.Args) > 1 {
+		inputData, err = os.ReadFile(os.Args[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading input file: %v\n", err)
+			return
+		}
+	} else {
+		fmt.Println("Please provide a JSON file as input.")
+		return
+	}
+
+	// Parse JSON into InputMetric array
+	var inputs []models.InputMetric
+	if err := json.Unmarshal(inputData, &inputs); err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing input JSON: %v\n", err)
+		return
+	}
+
+	// Convert metrics
+	startTime := time.Now()
+	results := converter.ConvertToOTEL(inputs)
+	duration := time.Since(startTime)
+
+	// Output results
+	for i, result := range results {
+		resultJSON, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error marshaling result JSON: %v\n", err)
+			continue
+		}
+		fmt.Printf("Result %d:\n%s\n\n", i+1, string(resultJSON))
+	}
+
+	fmt.Printf("Time taken to process metrics: %v\n", duration)
+}
+2. /internal/models/models.go (Data Models)
+go
+Copy
+Edit
+package models
+
+// InputMetric represents the input JSON structure
+type InputMetric struct {
+	MetricStreamName string            `json:"metric_stream_name"`
+	AccountID        string            `json:"account_id"`
+	Region           string            `json:"region"`
+	Namespace        string            `json:"namespace"`
+	MetricName       string            `json:"metric_name"`
+	Dimensions       map[string]string `json:"dimensions"`
+	Timestamp        int64             `json:"timestamp"`
+	Value            struct {
+		Max   float64 `json:"max"`
+		Min   float64 `json:"min"`
+		Sum   float64 `json:"sum"`
+		Count float64 `json:"count"`
+	} `json:"value"`
+	Unit string `json:"unit"`
+}
+
+// OTEL Output Structures
+type Attribute struct {
+	Key   string         `json:"key"`
+	Value AttributeValue `json:"value"`
+}
+
+type AttributeValue struct {
+	StringValue string `json:"stringValue,omitempty"`
+}
+
+type DataPoint struct {
+	Attributes   []Attribute `json:"attributes"`
+	TimeUnixNano string      `json:"timeUnixNano"`
+	AsDouble     float64     `json:"asDouble"`
+}
+
+type Gauge struct {
+	DataPoints []DataPoint `json:"dataPoints"`
+}
+
+type Metric struct {
+	Name  string `json:"name"`
+	Unit  string `json:"unit"`
+	Gauge Gauge  `json:"gauge"`
+}
+
+type ScopeMetrics struct {
+	Scope   struct{}  `json:"scope"`
+	Metrics []Metric  `json:"metrics"`
+}
+
+type Resource struct {
+	Attributes []Attribute `json:"attributes"`
+}
+
+type ResourceMetrics struct {
+	Resource     Resource       `json:"resource"`
+	ScopeMetrics []ScopeMetrics `json:"scopeMetrics"`
+}
+
+type IndividualMetricResult struct {
+	ResourceMetrics ResourceMetrics `json:"resourceMetrics"`
+}
+3. /internal/converter/converter.go (Conversion Logic)
+go
+Copy
+Edit
+package converter
+
+import (
+	"otel-metrics-converter/internal/models"
+	"otel-metrics-converter/internal/utils"
+	"sort"
+	"strconv"
+	"sync"
+)
+
+// ConvertToOTEL converts a list of InputMetric to OTEL format
+func ConvertToOTEL(inputs []models.InputMetric) []models.IndividualMetricResult {
+	if len(inputs) == 0 {
+		return []models.IndividualMetricResult{}
+	}
+
+	sort.Slice(inputs, func(i, j int) bool {
+		if inputs[i].AccountID != inputs[j].AccountID {
+			return inputs[i].AccountID < inputs[j].AccountID
+		}
+		if inputs[i].Region != inputs[j].Region {
+			return inputs[i].Region < inputs[j].Region
+		}
+		return inputs[i].Namespace < inputs[j].Namespace
+	})
+
+	results := make([]models.IndividualMetricResult, len(inputs))
+	numWorkers := utils.GetOptimalWorkerCount(len(inputs))
+
+	var wg sync.WaitGroup
+	for i := 0; i < numWorkers; i++ {
+		start := i * (len(inputs) / numWorkers)
+		end := start + (len(inputs) / numWorkers)
+		if i == numWorkers-1 {
+			end = len(inputs)
+		}
+
+		wg.Add(1)
+		go func(start, end int) {
+			defer wg.Done()
+			for j := start; j < end; j++ {
+				results[j] = models.IndividualMetricResult{
+					ResourceMetrics: processInputToResourceMetrics(inputs[j]),
+				}
+			}
+		}(start, end)
+	}
+
+	wg.Wait()
+	return results
+}
+
+// processInputToResourceMetrics converts a single InputMetric to ResourceMetrics
+func processInputToResourceMetrics(input models.InputMetric) models.ResourceMetrics {
+	attrs := utils.ConvertDimensionsToAttributes(input.Dimensions)
+
+	metrics := []models.Metric{
+		utils.CreateMetric(input, "_max", input.Value.Max),
+		utils.CreateMetric(input, "_min", input.Value.Min),
+		utils.CreateMetric(input, "_sum", input.Value.Sum),
+		utils.CreateMetric(input, "_count", input.Value.Count),
+	}
+
+	return models.ResourceMetrics{
+		Resource: models.Resource{
+			Attributes: []models.Attribute{
+				{Key: "cloud.account.id", Value: models.AttributeValue{StringValue: input.AccountID}},
+				{Key: "cloud.region", Value: models.AttributeValue{StringValue: input.Region}},
+				{Key: "cloud.namespace", Value: models.AttributeValue{StringValue: input.Namespace}},
+				{Key: "metric_stream_name", Value: models.AttributeValue{StringValue: input.MetricStreamName}},
+			},
+		},
+		ScopeMetrics: []models.ScopeMetrics{{Metrics: metrics}},
+	}
+}
+4. /internal/utils/utils.go (Helper Functions)
+go
+Copy
+Edit
+package utils
+
+import (
+	"otel-metrics-converter/internal/models"
+	"runtime"
+)
+
+// Returns optimal worker count based on available CPU
+func GetOptimalWorkerCount(numItems int) int {
+	W := runtime.NumCPU()
+	if W > 8 {
+		W = 8
+	}
+	if numItems < 10*W {
+		W = numItems / 10
+		if W < 1 {
+			W = 1
+		}
+	}
+	return W
+}
+
+// Converts dimensions into OTEL attributes
+func ConvertDimensionsToAttributes(dimensions map[string]string) []models.Attribute {
+	attributes := make([]models.Attribute, 0, len(dimensions))
+	for k, v := range dimensions {
+		attributes = append(attributes, models.Attribute{Key: k, Value: models.AttributeValue{StringValue: v}})
+	}
+	return attributes
+}
