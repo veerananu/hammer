@@ -1,0 +1,26 @@
+package converter
+
+import "sync"
+
+// AttributePool reduces memory allocations for attributes
+type AttributePool struct {
+	pool sync.Pool
+}
+
+func NewAttributePool() *AttributePool {
+	return &AttributePool{
+		pool: sync.Pool{
+			New: func() interface{} {
+				return make([]models.Attribute, 0, 10)
+			},
+		},
+	}
+}
+
+func (p *AttributePool) Get() []models.Attribute {
+	return p.pool.Get().([]models.Attribute)[:0] // Reset length, keep capacity
+}
+
+func (p *AttributePool) Put(attrs []models.Attribute) {
+	p.pool.Put(attrs)
+}
