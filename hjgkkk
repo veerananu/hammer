@@ -1,0 +1,18 @@
+package models
+
+type InputMetric struct {
+	MetricStreamName string            `json:"metric_stream_name"`
+	AccountID        string            `json:"account_id"`
+	Region           string            `json:"region"`
+	Namespace        string            `json:"namespace"`
+	MetricName       string            `json:"metric_name"`
+	Dimensions       map[string]string `json:"dimensions"`
+	Timestamp        int64             `json:"timestamp"`
+	Value            struct {
+		Max   float64 `json:"max"`
+		Min   float64 `json:"min"`
+		Sum   float64 `json:"sum"`
+		Count float64 `json:"count"`
+	} `json:"value"`
+	Unit string `json:"unit"`
+}
