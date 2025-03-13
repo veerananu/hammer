@@ -1,0 +1,44 @@
+package models
+
+type Attribute struct {
+	Key   string         `json:"key"`
+	Value AttributeValue `json:"value"`
+}
+
+type AttributeValue struct {
+	StringValue string `json:"stringValue,omitempty"`
+}
+
+type DataPoint struct {
+	Attributes   []Attribute `json:"attributes"`
+	TimeUnixNano string      `json:"timeUnixNano"`
+	AsDouble     float64     `json:"asDouble"`
+}
+
+type Gauge struct {
+	DataPoints []DataPoint `json:"dataPoints"`
+}
+
+type Metric struct {
+	Name  string `json:"name"`
+	Unit  string `json:"unit"`
+	Gauge Gauge  `json:"gauge"`
+}
+
+type ScopeMetrics struct {
+	Scope   struct{} `json:"scope"`
+	Metrics []Metric `json:"metrics"`
+}
+
+type Resource struct {
+	Attributes []Attribute `json:"attributes"`
+}
+
+type ResourceMetrics struct {
+	Resource     Resource       `json:"resource"`
+	ScopeMetrics []ScopeMetrics `json:"scopeMetrics"`
+}
+
+type IndividualMetricResult struct {
+	ResourceMetrics ResourceMetrics `json:"resourceMetrics"`
+}
