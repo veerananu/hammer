@@ -1,0 +1,35 @@
+package converter
+
+import (
+	"otel-metric-converter/internal/models"
+	"otel-metric-converter/internal/converter/worker"
+	"sort"
+	"runtime"
+)
+
+// ConvertToOTEL converts input metrics to OTEL format
+func ConvertToOTEL(inputs []models.InputMetric) []models.IndividualMetricResult {
+	if len(inputs) == 0 {
+		return []models.IndividualMetricResult{}
+	}
+
+	// Sort for deterministic processing
+	sort.Slice(inputs, func(i, j int) bool {
+		if inputs[i].AccountID != inputs[j].AccountID {
+			return inputs[i].AccountID < inputs[j].AccountID
+		}
+		if inputs[i].Region != inputs[j].Region {
+			return inputs[i].Region < inputs[j].Region
+		}
+		return inputs[i].Namespace < inputs[j].Namespace
+	})
+
+	// Number of workers based on CPU cores
+	numWorkers := runtime.NumCPU()
+	if numWorkers > 8 {
+		numWorkers = 8
+	}
+
+	// Process metrics in parallel
+	return worker.ProcessInParallel(inputs, numWorkers)
+}
