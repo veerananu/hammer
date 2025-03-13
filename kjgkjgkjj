@@ -1,0 +1,45 @@
+package worker
+
+import (
+	"sync"
+	"otel-metric-converter/internal/models"
+)
+
+// ProcessInParallel distributes work across multiple goroutines
+func ProcessInParallel(inputs []models.InputMetric, numWorkers int) []models.IndividualMetricResult {
+	results := make([]models.IndividualMetricResult, len(inputs))
+	var wg sync.WaitGroup
+
+	chunkSize := (len(inputs) + numWorkers - 1) / numWorkers
+
+	for i := 0; i < numWorkers; i++ {
+		start := i * chunkSize
+		end := start + chunkSize
+		if end > len(inputs) {
+			end = len(inputs)
+		}
+		if start >= end {
+			break
+		}
+
+		wg.Add(1)
+		go func(start, end int) {
+			defer wg.Done()
+			for j := start; j < end; j++ {
+				results[j] = models.IndividualMetricResult{
+					ResourceMetrics: processInputToResourceMetrics(inputs[j]),
+				}
+			}
+		}(start, end)
+	}
+
+	wg.Wait()
+	return results
+}
+
+// processInputToResourceMetrics processes a single metric
+func processInputToResourceMetrics(input models.InputMetric) models.ResourceMetrics {
+	// Convert input metric to OTEL ResourceMetrics
+	// (Implementation omitted for brevity)
+	return models.ResourceMetrics{}
+}
