@@ -1,0 +1,335 @@
+Directory Structure:
+pgsql
+Copy code
+myproject/
+├── cmd/
+│   └── myapp/
+│       └── main.go
+├── internal/
+│   └── metrics/
+│       ├── conversion.go
+│       └── types.go
+├── go.mod
+└── README.md
+1. cmd/myapp/main.go
+go
+Copy code
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"time"
+
+	"myproject/internal/metrics"
+)
+
+func main() {
+	// Handle file input if provided, otherwise use example
+	var inputData []byte
+	var err error
+
+	if len(os.Args) > 1 {
+		// Read from file if provided
+		inputData, err = os.ReadFile(os.Args[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading input file: %v\n", err)
+			return
+		}
+	} else {
+		// Example input with multiple metrics
+		inputData = []byte(`
+			[{"metric_stream_name":"CustomFull-1Uh2uW","account_id":"149536493833","region":"us-east-1","namespace":"AWS/EBS","metric_name":"VolumeIdleTime","dimensions":{"VolumeId":"vol-0e1750ccd74c1399d"},"timestamp":1736142780000,"value":{"max":59.990422,"min":59.990422,"sum":59.990422,"count":1.0},"unit":"Seconds"},
+			{"metric_stream_name":"CustomFull-1Uh2uW","account_id":"149536493833","region":"us-east-1","namespace":"AWS/EBS","metric_name":"VolumeTotalWriteTime","dimensions":{"VolumeId":"vol-0e1750ccd74c1399d"},"timestamp":1736142780000,"value":{"max":0.050324,"min":0.050324,"sum":0.050324,"count":1.0},"unit":"Seconds"}]
+		`)
+	}
+
+	var inputs []metrics.InputMetric
+	if err := json.Unmarshal(inputData, &inputs); err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing input JSON: %v\n", err)
+		return
+	}
+
+	startTime := time.Now()
+	// Convert to OTEL format
+	results := metrics.ConvertToOTEL(inputs)
+	// Record the end time
+	endTime := time.Now()
+
+	// Calculate the duration
+	duration := endTime.Sub(startTime)
+
+	// Output each result as a separate JSON object
+	for i, result := range results {
+		resultJSON, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error marshaling result JSON: %v\n", err)
+			continue
+		}
+		fmt.Printf("Result %d:\n%s\n\n", i+1, string(resultJSON))
+	}
+
+	fmt.Printf("Time taken to process metrics: %v\n", duration)
+}
+2. internal/metrics/types.go
+go
+Copy code
+package metrics
+
+// InputMetric represents the input JSON structure
+type InputMetric struct {
+	MetricStreamName string            `json:"metric_stream_name"`
+	AccountID        string            `json:"account_id"`
+	Region           string            `json:"region"`
+	Namespace        string            `json:"namespace"`
+	MetricName       string            `json:"metric_name"`
+	Dimensions       map[string]string `json:"dimensions"`
+	Timestamp        int64             `json:"timestamp"`
+	Value            struct {
+		Max   float64 `json:"max"`
+		Min   float64 `json:"min"`
+		Sum   float64 `json:"sum"`
+		Count float64 `json:"count"`
+	} `json:"value"`
+	Unit string `json:"unit"`
+}
+
+// OTEL structs for the output JSON
+type Attribute struct {
+	Key   string         `json:"key"`
+	Value AttributeValue `json:"value"`
+}
+
+type AttributeValue struct {
+	StringValue string `json:"stringValue,omitempty"`
+}
+
+type DataPoint struct {
+	Attributes   []Attribute `json:"attributes"`
+	TimeUnixNano string      `json:"timeUnixNano"`
+	AsDouble     float64     `json:"asDouble"`
+}
+
+type Gauge struct {
+	DataPoints []DataPoint `json:"dataPoints"`
+}
+
+type Metric struct {
+	Name  string `json:"name"`
+	Unit  string `json:"unit"`
+	Gauge Gauge  `json:"gauge"`
+}
+
+type ScopeMetrics struct {
+	Scope   struct{} `json:"scope"`
+	Metrics []Metric `json:"metrics"`
+}
+
+type Resource struct {
+	Attributes []Attribute `json:"attributes"`
+}
+
+type ResourceMetrics struct {
+	Resource     Resource       `json:"resource"`
+	ScopeMetrics []ScopeMetrics `json:"scopeMetrics"`
+}
+
+// IndividualMetricResult represents the output for each input metric
+type IndividualMetricResult struct {
+	ResourceMetrics ResourceMetrics `json:"resourceMetrics"`
+}
+3. internal/metrics/conversion.go
+go
+Copy code
+package metrics
+
+import (
+	"runtime"
+	"sort"
+	"strconv"
+	"sync"
+)
+
+// Predefined metric suffixes and unit mapping
+var (
+	metricSuffixes = [4]string{"_max", "_min", "_sum", "_count"}
+	unitValues     = [4]string{"", "", "", "1"} // The first 3 will be set to input.Unit
+)
+
+// AttributePool manages a pool of attribute slices to reduce allocations
+type AttributePool struct {
+	pool sync.Pool
+}
+
+func NewAttributePool() *AttributePool {
+	return &AttributePool{
+		pool: sync.Pool{
+			New: func() interface{} {
+				// Initial capacity of 10 should cover most cases
+				return make([]Attribute, 0, 10)
+			},
+		},
+	}
+}
+
+func (p *AttributePool) Get() []Attribute {
+	return p.pool.Get().([]Attribute)[:0] // Reset length but keep capacity
+}
+
+func (p *AttributePool) Put(attrs []Attribute) {
+	p.pool.Put(attrs)
+}
+
+// Global attribute pool
+var attributePool = NewAttributePool()
+
+// ConvertToOTEL converts a list of InputMetric to individual OTEL IndividualMetricResult objects
+func ConvertToOTEL(inputs []InputMetric) []IndividualMetricResult {
+	// Early return if no inputs
+	if len(inputs) == 0 {
+		return []IndividualMetricResult{}
+	}
+
+	// Sort inputs for deterministic output based on AccountID, Region, and Namespace
+	sort.Slice(inputs, func(i, j int) bool {
+		if inputs[i].AccountID != inputs[j].AccountID {
+			return inputs[i].AccountID < inputs[j].AccountID
+		}
+		if inputs[i].Region != inputs[j].Region {
+			return inputs[i].Region < inputs[j].Region
+		}
+		return inputs[i].Namespace < inputs[j].Namespace
+	})
+
+	// Preallocate results slice with exact length to avoid reallocations
+	results := make([]IndividualMetricResult, len(inputs))
+
+	// Set number of workers based on available CPU cores with an upper bound
+	W := runtime.NumCPU()
+	if W > 8 {
+		W = 8 // Cap at 8 goroutines to avoid excessive context switching
+	}
+	if W < 1 {
+		W = 1
+	}
+
+	// Minimum batch size to avoid goroutine overhead for small inputs
+	minBatchSize := 10
+	if len(inputs) < minBatchSize*W {
+		// For small sets, reduce worker count or process in a single goroutine
+		if len(inputs) < minBatchSize {
+			W = 1
+		} else {
+			W = len(inputs) / minBatchSize
+		}
+	}
+
+	// Calculate chunk size using ceiling division for even work distribution
+	chunkSize := (len(inputs) + W - 1) / W
+
+	// Use WaitGroup to synchronize goroutines
+	var wg sync.WaitGroup
+	for i := 0; i < W; i++ {
+		start := i * chunkSize
+		end := start + chunkSize
+		if end > len(inputs) {
+			end = len(inputs)
+		}
+		if start >= end {
+			break // No work left for this worker
+		}
+
+		wg.Add(1)
+		go func(start, end int) {
+			defer wg.Done()
+			for j := start; j < end; j++ {
+				results[j] = IndividualMetricResult{
+					ResourceMetrics: processInputToResourceMetrics(inputs[j]),
+				}
+			}
+		}(start, end)
+	}
+
+	// Wait for all workers to complete
+	wg.Wait()
+
+	return results
+}
+
+// processInputToResourceMetrics converts a single InputMetric to a ResourceMetrics
+func processInputToResourceMetrics(input InputMetric) ResourceMetrics {
+	// Extract and sort dimension keys for consistent attribute ordering
+	dimensionKeys := make([]string, 0, len(input.Dimensions))
+	for k := range input.Dimensions {
+		dimensionKeys = append(dimensionKeys, k)
+	}
+	sort.Strings(dimensionKeys)
+
+	// Convert dimensions to OTEL attributes
+	attributes := attributePool.Get()
+	defer attributePool.Put(attributes)
+
+	for _, k := range dimensionKeys {
+		attributes = append(attributes, Attribute{
+			Key:   k,
+			Value: AttributeValue{StringValue: input.Dimensions[k]},
+		})
+	}
+
+	// Copy attributes to allow safe pool return
+	attrsCopy := make([]Attribute, len(attributes))
+	copy(attrsCopy, attributes)
+
+	// Convert timestamp from milliseconds to nanoseconds as a string - do this only once
+	timeNano := strconv.FormatInt(input.Timestamp*1_000_000, 10)
+
+	// Create base unit values
+	localUnits := unitValues
+	localUnits[0] = input.Unit
+	localUnits[1] = input.Unit
+	localUnits[2] = input.Unit
+	// localUnits[3] is already "1"
+
+	// Values array for metric values
+	values := [4]float64{input.Value.Max, input.Value.Min, input.Value.Sum, input.Value.Count}
+
+	// Create OTEL metrics for max, min, sum, and count
+	metrics := make([]Metric, 4)
+	for i := 0; i < 4; i++ {
+		metrics[i] = Metric{
+			Name: input.MetricName + metricSuffixes[i],
+			Unit: localUnits[i],
+			Gauge: Gauge{
+				DataPoints: []DataPoint{
+					{
+						Attributes:   attrsCopy,
+						TimeUnixNano: timeNano,
+						AsDouble:     values[i],
+					},
+				},
+			},
+		}
+	}
+
+	// Resource attributes (created once per input)
+	resourceAttrs := []Attribute{
+		{Key: "cloud.account.id", Value: AttributeValue{StringValue: input.AccountID}},
+		{Key: "cloud.region", Value: AttributeValue{StringValue: input.Region}},
+		{Key: "cloud.namespace", Value: AttributeValue{StringValue: input.Namespace}},
+		{Key: "metric_stream_name", Value: AttributeValue{StringValue: input.MetricStreamName}},
+	}
+
+	// Assemble the ResourceMetrics structure
+	return ResourceMetrics{
+		Resource: Resource{
+			Attributes: resourceAttrs,
+		},
+		ScopeMetrics: []ScopeMetrics{
+			{
+				Scope:   struct{}{},
+				Metrics: metrics,
+			},
+		},
+	}
+}
