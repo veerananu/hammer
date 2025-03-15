@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fakettp-config
+data:
+  fakettp.json: |
+    {
+      "proxy_host": "http://localhost",
+      "proxy_port": 8080,
+      "port": 5555,
+      "fakes": [
+        {
+          "hyjack": "/api/settings",
+          "code": 500
+        },
+        {
+          "hyjack": "/api/users",
+          "methods": ["GET"],
+          "code": 404,
+          "body": "User Not Found"
+        }
+      ]
+    }
