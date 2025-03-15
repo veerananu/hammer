@@ -1,0 +1,11 @@
+  "fakes": [
+    {
+      "hyjack": "/metrics",
+      "methods": ["GET"],
+      "code": 200,
+      "headers": [
+        "Content-Type: text/plain; version=0.0.4"
+      ],
+      "body": "# HELP http_requests_total The total number of HTTP requests\n# TYPE http_requests_total counter\nhttp_requests_total{method=\"get\",status=\"200\"} 1027\nhttp_requests_total{method=\"post\",status=\"500\"} 3"
+    }
+  ]
