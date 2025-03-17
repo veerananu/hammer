@@ -1,0 +1,186 @@
+package main
+
+import (
+    "bytes"
+    "flag"
+    "fmt"
+    "log"
+    "math"
+    "net/http"
+    "os"
+    "time"
+
+    "myproject/internal/metrics"
+    jsoniter "github.com/json-iterator/go"
+)
+
+// Configure jsoniter to mimic the standard library's API
+var json = jsoniter.ConfigCompatibleWithStandardLibrary
+
+var (
+    printJSON  bool
+    numWorkers int
+    batchSize  int
+)
+
+// Reusable HTTP Client with optimized settings
+var client = &http.Client{
+    Timeout: 10 * time.Second,
+    Transport: &http.Transport{
+        MaxIdleConns:        100,
+        MaxIdleConnsPerHost: 30,
+    },
+}
+
+func main() {
+    flag.BoolVar(&printJSON, "print-json", false, "Print the OTel JSON before sending")
+    flag.IntVar(&numWorkers, "workers", 20, "Number of concurrent workers")
+    flag.IntVar(&batchSize, "batch-size", 500, "Batch size for sending metrics")
+    flag.Parse()
+
+    // Handle input
+    var inputData []byte
+    var err error
+
+    if len(flag.Args()) > 0 {
+        inputData, err = os.ReadFile(flag.Args()[0])
+        if err != nil {
+            fmt.Fprintf(os.Stderr, "Error reading input file: %v\n", err)
+            return
+        }
+    } else {
+        // Example input with multiple metrics
+        inputData = []byte(`[
+            {"metric_stream_name":"CustomFull-1Uh2uW","account_id":"149536493833","region":"us-east-1","namespace":"AWS/EBS","metric_name":"VolumeIdleTime","dimensions":{"VolumeId":"vol-0e1750ccd74c1399d"},"timestamp":1736142780000,"value":{"max":59.990422,"min":59.990422,"sum":59.990422,"count":1.0},"unit":"Seconds"},
+            {"metric_stream_name":"CustomFull-1Uh2uW","account_id":"149536493833","region":"us-east-1","namespace":"AWS/EBS","metric_name":"VolumeTotalWriteTime","dimensions":{"VolumeId":"vol-0e1750ccd74c1399d"},"timestamp":1736142780000,"value":{"max":0.050324,"min":0.050324,"sum":0.050324,"count":1.0},"unit":"Seconds"}
+        ]`)
+    }
+
+    // Unmarshal input data using jsoniter
+    var inputs []metrics.InputMetric
+    if err := json.Unmarshal(inputData, &inputs); err != nil {
+        fmt.Fprintf(os.Stderr, "Error parsing input JSON: %v\n", err)
+        return
+    }
+
+    // Channels with buffer sizes
+    resultChan := make(chan metrics.ResourceMetrics, 1000)
+    batchChan := make(chan []metrics.ResourceMetrics, 50)
+
+    // Configuration
+    flushInterval := 10 * time.Second
+
+    // Start the sender goroutine
+    var sendWg sync.WaitGroup
+    sendWg.Add(1)
+    go func() {
+        defer sendWg.Done()
+        sender(resultChan, batchChan, batchSize, flushInterval)
+    }()
+
+    // Start multiple send workers
+    for i := 0; i < numWorkers; i++ {
+        sendWg.Add(1)
+        go sendWorker(batchChan, &sendWg)
+    }
+
+    // Start conversion and measure time
+    startTime := time.Now()
+    metrics.ConvertToOTEL(inputs, resultChan)
+
+    // Wait for all sends to complete
+    sendWg.Wait()
+    endTime := time.Now()
+
+    fmt.Printf("All metrics sent. Time taken: %v\n", endTime.Sub(startTime))
+}
+
+// sender collects ResourceMetrics from resultChan and sends batches to batchChan
+func sender(resultChan <-chan metrics.ResourceMetrics, batchChan chan<- []metrics.ResourceMetrics, batchSize int, flushInterval time.Duration) {
+    batch := make([]metrics.ResourceMetrics, 0, batchSize)
+    timer := time.NewTimer(flushInterval)
+    defer timer.Stop()
+
+    for {
+        select {
+        case rm, ok := <-resultChan:
+            if !ok {
+                if len(batch) > 0 {
+                    batchChan <- batch
+                }
+                close(batchChan)
+                return
+            }
+            batch = append(batch, rm)
+            if len(batch) >= batchSize {
+                batchChan <- batch
+                batch = make([]metrics.ResourceMetrics, 0, batchSize)
+                timer.Reset(flushInterval)
+            }
+        case <-timer.C:
+            if len(batch) > 0 {
+                batchChan <- batch
+                batch = make([]metrics.ResourceMetrics, 0, batchSize)
+            }
+            timer.Reset(flushInterval)
+        }
+    }
+}
+
+// sendWorker processes batches from batchChan and sends them concurrently
+func sendWorker(batchChan <-chan []metrics.ResourceMetrics, wg *sync.WaitGroup) {
+    defer wg.Done()
+    for batch := range batchChan {
+        sendBatch(batch)
+    }
+}
+
+// sendBatch sends a batch of ResourceMetrics to the OTel receiver with retries
+func sendBatch(batch []metrics.ResourceMetrics) {
+    const maxRetries = 3
+    const initialBackoff = 1 * time.Second
+    const backoffMultiplier = 2.0
+
+    request := metrics.ExportMetricsServiceRequest{ResourceMetrics: batch}
+    
+    // Marshal the request using jsoniter
+    jsonData, err := json.Marshal(request)
+    if err != nil {
+        log.Printf("Error marshaling JSON: %v", err)
+        return
+    }
+
+    // Pretty print the JSON if the flag is set
+    if printJSON {
+        prettyJSON, err := json.MarshalIndent(request, "", "  ")
+        if err != nil {
+            log.Printf("Error marshaling indented JSON: %v", err)
+        } else {
+            fmt.Printf("Sending batch:\n%s\n", string(prettyJSON))
+        }
+    }
+
+    for attempt := 0; attempt <= maxRetries; attempt++ {
+        log.Printf("Attempt %d to send batch of %d ResourceMetrics", attempt+1, len(batch))
+        resp, err := client.Post("http://167.71.85.187:4318/v1/metrics", "application/json", bytes.NewBuffer(jsonData))
+        if err == nil && resp.StatusCode == http.StatusOK {
+            log.Printf("Successfully sent batch of %d ResourceMetrics", len(batch))
+            if resp != nil {
+                resp.Body.Close()
+            }
+            return
+        }
+
+        if resp != nil {
+            resp.Body.Close()
+        }
+
+        if attempt < maxRetries {
+            backoff := initialBackoff * time.Duration(math.Pow(backoffMultiplier, float64(attempt)))
+            log.Printf("Attempt %d failed: %v. Retrying in %v...", attempt+1, err, backoff)
+            time.Sleep(backoff)
+        } else {
+            log.Printf("Failed to send batch after %d attempts: %v", maxRetries+1, err)
+        }
+    }
+}
