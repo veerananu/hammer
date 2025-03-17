@@ -1,0 +1,514 @@
+text
+
+Collapse
+
+Wrap
+
+Copy
+myproject/
+├── cmd/
+│   └── myapp/
+│       └── main.go
+├── internal/
+│   └── metrics/
+│       ├── conversion.go
+│       └── types.go
+├── go.mod
+└── README.md
+The new code introduces concurrent processing, batching, and HTTP sending capabilities. We'll distribute its components across your existing files, updating cmd/myapp/main.go to handle the main logic and modifying internal/metrics/conversion.go and internal/metrics/types.go to support the new requirements.
+
+Updated Files
+1. internal/metrics/types.go
+We'll keep most of your existing type definitions and add the ExportMetricsServiceRequest struct required for OTLP HTTP JSON payloads. We'll also remove IndividualMetricResult since the new code sends ResourceMetrics directly via channels.
+
+go
+
+Collapse
+
+Wrap
+
+Copy
+package metrics
+
+// InputMetric represents the input JSON structure
+type InputMetric struct {
+	MetricStreamName string            `json:"metric_stream_name"`
+	AccountID        string            `json:"account_id"`
+	Region           string            `json:"region"`
+	Namespace        string            `json:"namespace"`
+	MetricName       string            `json:"metric_name"`
+	Dimensions       map[string]string `json:"dimensions"`
+	Timestamp        int64             `json:"timestamp"`
+	Value            struct {
+		Max   float64 `json:"max"`
+		Min   float64 `json:"min"`
+		Sum   float64 `json:"sum"`
+		Count float64 `json:"count"`
+	} `json:"value"`
+	Unit string `json:"unit"`
+}
+
+// Attribute represents an OTEL attribute
+type Attribute struct {
+	Key   string         `json:"key"`
+	Value AttributeValue `json:"value"`
+}
+
+// AttributeValue holds the value of an attribute
+type AttributeValue struct {
+	StringValue string `json:"stringValue,omitempty"`
+}
+
+// DataPoint represents a single data point in a metric
+type DataPoint struct {
+	Attributes   []Attribute `json:"attributes"`
+	TimeUnixNano string      `json:"timeUnixNano"`
+	AsDouble     float64     `json:"asDouble"`
+}
+
+// Gauge represents a gauge metric type
+type Gauge struct {
+	DataPoints []DataPoint `json:"dataPoints"`
+}
+
+// Metric defines an OTEL metric
+type Metric struct {
+	Name  string `json:"name"`
+	Unit  string `json:"unit"`
+	Gauge Gauge  `json:"gauge"`
+}
+
+// ScopeMetrics groups metrics under a scope
+type ScopeMetrics struct {
+	Scope   struct{} `json:"scope"`
+	Metrics []Metric `json:"metrics"`
+}
+
+// Resource defines resource-level attributes
+type Resource struct {
+	Attributes []Attribute `json:"attributes"`
+}
+
+// ResourceMetrics combines resource and scope metrics
+type ResourceMetrics struct {
+	Resource     Resource       `json:"resource"`
+	ScopeMetrics []ScopeMetrics `json:"scopeMetrics"`
+}
+
+// ExportMetricsServiceRequest defines the OTLP HTTP JSON structure
+type ExportMetricsServiceRequest struct {
+	ResourceMetrics []ResourceMetrics `json:"resourceMetrics"`
+}
+Changes:
+
+Removed IndividualMetricResult since the new architecture streams ResourceMetrics via channels.
+Added ExportMetricsServiceRequest to support sending batches to the OTEL receiver.
+2. internal/metrics/conversion.go
+We'll update ConvertToOTEL to send ResourceMetrics to a channel instead of returning a slice, aligning with the new concurrent sending approach. We'll also move AttributePool and processInputToResourceMetrics here, keeping conversion logic encapsulated.
+
+go
+
+Collapse
+
+Wrap
+
+Copy
+package metrics
+
+import (
+	"runtime"
+	"sort"
+	"strconv"
+	"sync"
+)
+
+// Predefined metric suffixes and unit mapping
+var (
+	metricSuffixes = [4]string{"_max", "_min", "_sum", "_count"}
+	unitValues     = [4]string{"", "", "", "1"} // The first 3 will be set to input.Unit
+)
+
+// AttributePool manages a pool of attribute slices to reduce allocations
+type AttributePool struct {
+	pool sync.Pool
+}
+
+func NewAttributePool() *AttributePool {
+	return &AttributePool{
+		pool: sync.Pool{
+			New: func() interface{} {
+				// Initial capacity of 10 should cover most cases
+				return make([]Attribute, 0, 10)
+			},
+		},
+	}
+}
+
+func (p *AttributePool) Get() []Attribute {
+	return p.pool.Get().([]Attribute)[:0] // Reset length but keep capacity
+}
+
+func (p *AttributePool) Put(attrs []Attribute) {
+	p.pool.Put(attrs)
+}
+
+// Global attribute pool
+var attributePool = NewAttributePool()
+
+// ConvertToOTEL converts a list of InputMetric to ResourceMetrics and sends them to the provided channel
+func ConvertToOTEL(inputs []InputMetric, resultChan chan<- ResourceMetrics) {
+	if len(inputs) == 0 {
+		close(resultChan)
+		return
+	}
+
+	// Sort inputs for deterministic output based on AccountID, Region, and Namespace
+	sort.Slice(inputs, func(i, j int) bool {
+		if inputs[i].AccountID != inputs[j].AccountID {
+			return inputs[i].AccountID < inputs[j].AccountID
+		}
+		if inputs[i].Region != inputs[j].Region {
+			return inputs[i].Region < inputs[j].Region
+		}
+		return inputs[i].Namespace < inputs[j].Namespace
+	})
+
+	W := runtime.NumCPU()
+	if W > 8 {
+		W = 8 // Cap at 8 to avoid excessive context switching
+	}
+	if W < 1 {
+		W = 1
+	}
+
+	minBatchSize := 10
+	if len(inputs) < minBatchSize*W {
+		if len(inputs) < minBatchSize {
+			W = 1
+		} else {
+			W = len(inputs) / minBatchSize
+		}
+	}
+
+	chunkSize := (len(inputs) + W - 1) / W
+
+	var wg sync.WaitGroup
+	for i := 0; i < W; i++ {
+		start := i * chunkSize
+		end := start + chunkSize
+		if end > len(inputs) {
+			end = len(inputs)
+		}
+		if start >= end {
+			break
+		}
+
+		wg.Add(1)
+		go func(start, end int) {
+			defer wg.Done()
+			for j := start; j < end; j++ {
+				rm := processInputToResourceMetrics(inputs[j])
+				resultChan <- rm
+			}
+		}(start, end)
+	}
+
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+}
+
+// processInputToResourceMetrics converts a single InputMetric to a ResourceMetrics
+func processInputToResourceMetrics(input InputMetric) ResourceMetrics {
+	// Extract and sort dimension keys for consistent attribute ordering
+	dimensionKeys := make([]string, 0, len(input.Dimensions))
+	for k := range input.Dimensions {
+		dimensionKeys = append(dimensionKeys, k)
+	}
+	sort.Strings(dimensionKeys)
+
+	// Convert dimensions to OTEL attributes
+	attributes := attributePool.Get()
+	defer attributePool.Put(attributes)
+
+	for _, k := range dimensionKeys {
+		attributes = append(attributes, Attribute{
+			Key:   k,
+			Value: AttributeValue{StringValue: input.Dimensions[k]},
+		})
+	}
+
+	// Copy attributes to allow safe pool return
+	attrsCopy := make([]Attribute, len(attributes))
+	copy(attrsCopy, attributes)
+
+	// Convert timestamp from milliseconds to nanoseconds as a string
+	timeNano := strconv.FormatInt(input.Timestamp*1_000_000, 10)
+
+	// Create base unit values
+	localUnits := unitValues
+	localUnits[0] = input.Unit
+	localUnits[1] = input.Unit
+	localUnits[2] = input.Unit
+	// localUnits[3] is already "1"
+
+	// Values array for metric values
+	values := [4]float64{input.Value.Max, input.Value.Min, input.Value.Sum, input.Value.Count}
+
+	// Create OTEL metrics for max, min, sum, and count
+	metrics := make([]Metric, 4)
+	for i := 0; i < 4; i++ {
+		metrics[i] = Metric{
+			Name: input.MetricName + metricSuffixes[i],
+			Unit: localUnits[i],
+			Gauge: Gauge{
+				DataPoints: []DataPoint{
+					{
+						Attributes:   attrsCopy,
+						TimeUnixNano: timeNano,
+						AsDouble:     values[i],
+					},
+				},
+			},
+		}
+	}
+
+	// Resource attributes
+	resourceAttrs := []Attribute{
+		{Key: "cloud.account.id", Value: AttributeValue{StringValue: input.AccountID}},
+		{Key: "cloud.region", Value: AttributeValue{StringValue: input.Region}},
+		{Key: "cloud.namespace", Value: AttributeValue{StringValue: input.Namespace}},
+		{Key: "metric_stream_name", Value: AttributeValue{StringValue: input.MetricStreamName}},
+	}
+
+	// Assemble the ResourceMetrics structure
+	return ResourceMetrics{
+		Resource: Resource{
+			Attributes: resourceAttrs,
+		},
+		ScopeMetrics: []ScopeMetrics{
+			{
+				Scope:   struct{}{},
+				Metrics: metrics,
+			},
+		},
+	}
+}
+Changes:
+
+Updated ConvertToOTEL to take a chan<- ResourceMetrics and send results to it, closing the channel when all goroutines complete.
+Kept AttributePool and processInputToResourceMetrics mostly unchanged, ensuring they work with the channel-based approach.
+Removed the return of []IndividualMetricResult in favor of channel output.
+3. cmd/myapp/main.go
+We'll replace the existing main.go with the new logic for reading input, setting up channels, and managing batching and sending to the OTEL receiver.
+
+go
+
+Collapse
+
+Wrap
+
+Copy
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"log"
+	"math"
+	"net/http"
+	"os"
+	"time"
+
+	"myproject/internal/metrics"
+)
+
+var (
+	printJSON  bool
+	numWorkers int
+	batchSize  int
+)
+
+// Reusable HTTP Client with optimized settings
+var client = &http.Client{
+	Timeout: 10 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 30,
+	},
+}
+
+func main() {
+	flag.BoolVar(&printJSON, "print-json", false, "Print the OTel JSON before sending")
+	flag.IntVar(&numWorkers, "workers", 20, "Number of concurrent workers")
+	flag.IntVar(&batchSize, "batch-size", 500, "Batch size for sending metrics")
+	flag.Parse()
+
+	// Handle input
+	var inputData []byte
+	var err error
+
+	if len(flag.Args()) > 0 {
+		inputData, err = os.ReadFile(flag.Args()[0])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading input file: %v\n", err)
+			return
+		}
+	} else {
+		// Example input with multiple metrics
+		inputData = []byte(`[
+			{"metric_stream_name":"CustomFull-1Uh2uW","account_id":"149536493833","region":"us-east-1","namespace":"AWS/EBS","metric_name":"VolumeIdleTime","dimensions":{"VolumeId":"vol-0e1750ccd74c1399d"},"timestamp":1736142780000,"value":{"max":59.990422,"min":59.990422,"sum":59.990422,"count":1.0},"unit":"Seconds"},
+			{"metric_stream_name":"CustomFull-1Uh2uW","account_id":"149536493833","region":"us-east-1","namespace":"AWS/EBS","metric_name":"VolumeTotalWriteTime","dimensions":{"VolumeId":"vol-0e1750ccd74c1399d"},"timestamp":1736142780000,"value":{"max":0.050324,"min":0.050324,"sum":0.050324,"count":1.0},"unit":"Seconds"}
+		]`)
+	}
+
+	var inputs []metrics.InputMetric
+	if err := json.Unmarshal(inputData, &inputs); err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing input JSON: %v\n", err)
+		return
+	}
+
+	// Channels with buffer sizes
+	resultChan := make(chan metrics.ResourceMetrics, 1000)
+	batchChan := make(chan []metrics.ResourceMetrics, 50)
+
+	// Configuration
+	flushInterval := 10 * time.Second
+
+	// Start the sender goroutine
+	var sendWg sync.WaitGroup
+	sendWg.Add(1)
+	go func() {
+		defer sendWg.Done()
+		sender(resultChan, batchChan, batchSize, flushInterval)
+	}()
+
+	// Start multiple send workers
+	for i := 0; i < numWorkers; i++ {
+		sendWg.Add(1)
+		go sendWorker(batchChan, &sendWg)
+	}
+
+	// Start conversion and measure time
+	startTime := time.Now()
+	metrics.ConvertToOTEL(inputs, resultChan)
+
+	// Wait for all sends to complete
+	sendWg.Wait()
+	endTime := time.Now()
+
+	fmt.Printf("All metrics sent. Time taken: %v\n", endTime.Sub(startTime))
+}
+
+// sender collects ResourceMetrics from resultChan and sends batches to batchChan
+func sender(resultChan <-chan metrics.ResourceMetrics, batchChan chan<- []metrics.ResourceMetrics, batchSize int, flushInterval time.Duration) {
+	batch := make([]metrics.ResourceMetrics, 0, batchSize)
+	timer := time.NewTimer(flushInterval)
+	defer timer.Stop()
+
+	for {
+		select {
+		case rm, ok := <-resultChan:
+			if !ok {
+				if len(batch) > 0 {
+					batchChan <- batch
+				}
+				close(batchChan)
+				return
+			}
+			batch = append(batch, rm)
+			if len(batch) >= batchSize {
+				batchChan <- batch
+				batch = make([]metrics.ResourceMetrics, 0, batchSize)
+				timer.Reset(flushInterval)
+			}
+		case <-timer.C:
+			if len(batch) > 0 {
+				batchChan <- batch
+				batch = make([]metrics.ResourceMetrics, 0, batchSize)
+			}
+			timer.Reset(flushInterval)
+		}
+	}
+}
+
+// sendWorker processes batches from batchChan and sends them concurrently
+func sendWorker(batchChan <-chan []metrics.ResourceMetrics, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for batch := range batchChan {
+		sendBatch(batch)
+	}
+}
+
+// sendBatch sends a batch of ResourceMetrics to the OTel receiver with retries
+func sendBatch(batch []metrics.ResourceMetrics) {
+	const maxRetries = 3
+	const initialBackoff = 1 * time.Second
+	const backoffMultiplier = 2.0
+
+	request := metrics.ExportMetricsServiceRequest{ResourceMetrics: batch}
+	jsonData, err := json.Marshal(request)
+	if err != nil {
+		log.Printf("Error marshaling JSON: %v", err)
+		return
+	}
+
+	if printJSON {
+		var prettyJSON bytes.Buffer
+		err := json.Indent(&prettyJSON, jsonData, "", "  ")
+		if err != nil {
+			log.Printf("Error indenting JSON: %v", err)
+		} else {
+			fmt.Printf("Sending batch:\n%s\n", prettyJSON.String())
+		}
+	}
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		log.Printf("Attempt %d to send batch of %d ResourceMetrics", attempt+1, len(batch))
+		resp, err := client.Post("http://167.71.85.187:4318/v1/metrics", "application/json", bytes.NewBuffer(jsonData))
+		if err == nil && resp.StatusCode == http.StatusOK {
+			log.Printf("Successfully sent batch of %d ResourceMetrics", len(batch))
+			if resp != nil {
+				resp.Body.Close()
+			}
+			return
+		}
+
+		if resp != nil {
+			resp.Body.Close()
+		}
+
+		if attempt < maxRetries {
+			backoff := initialBackoff * time.Duration(math.Pow(backoffMultiplier, float64(attempt)))
+			log.Printf("Attempt %d failed: %v. Retrying in %v...", attempt+1, err, backoff)
+			time.Sleep(backoff)
+		} else {
+			log.Printf("Failed to send batch after %d attempts: %v", maxRetries+1, err)
+		}
+	}
+}
+Changes:
+
+Added command-line flags (print-json, workers, batch-size) for configuration.
+Set up channels (resultChan, batchChan) and goroutines for streaming conversion and batch sending.
+Implemented sender, sendWorker, and sendBatch functions to handle batching and HTTP sending with retries.
+Used encoding/json instead of jsoniter for consistency with your existing code (switch to jsoniter if performance becomes critical).
+Kept your example input for testing consistency.
+Explanation
+Modularity: Conversion logic remains in internal/metrics, while orchestration and sending are in cmd/myapp/main.go.
+Concurrency: ConvertToOTEL processes inputs in parallel and sends results to a channel, allowing sender and sendWorker to batch and send concurrently.
+Efficiency: Buffered channels and a reusable HTTP client optimize resource usage.
+Reliability: Retry logic in sendBatch handles network failures gracefully.
+This integration preserves your project structure, enhances functionality with batch sending, and maintains consistency with your existing type definitions and conversion approach. To use it, ensure your go.mod includes necessary dependencies (net/http, etc.), and run the program with optional flags:
+
+bash
+
+Collapse
+
+Wrap
+
+Copy
+go run cmd/myapp/main.go -print-json -workers 10 -batch-size 100 input.json
