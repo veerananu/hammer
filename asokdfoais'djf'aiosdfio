@@ -1,0 +1,17 @@
+CPU Allocation:
+The requested CPU allocation is 100m, with an upper limit of 500m.
+The Horizontal Pod Autoscaler (HPA) is configured to scale between 3 and 10 replicas.
+At the maximum scale of 10 replicas, the total requested CPU amounts to 1000m (1 CPU), which remains within the defined request limit.
+Memory Allocation:
+The memory request limit is set to 1500MB, which is within the permitted threshold.
+Application Metrics:
+Application metrics are enabled and actively being collected.
+Dockerfile Considerations:
+When using the COPY command, any missing directories specified in the destination path are automatically created. As a result, running mkdir -p /new/ beforehand is unnecessary.
+When copying multiple files using a wildcard (e.g., COPY *.properties /new_sta/), the target directory must already exist.
+In cases where the destination directory does not exist, it is necessary to execute mkdir -p /new/ before running the COPY command.
+Logging in start.sh:
+Log files are generated but are not printed to stdout by default; instead, they are stored on the server.
+To ensure logs are available in Elasticsearch for troubleshooting, an additional command should be included to print logs to stdout.
+Gloo Metrics:
+Metrics collection for Gloo must be enabled.
