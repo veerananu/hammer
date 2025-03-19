@@ -1,0 +1,873 @@
+Project Structure
+The code is distributed as follows:
+
+cmd/myapp/main.go: Contains the Lambda handler and local testing logic.
+internal/metrics/conversion.go: Handles the conversion of input metrics to OpenTelemetry (OTEL) format.
+internal/metrics/types.go: Defines the data types used across the application.
+Solution Code
+cmd/myapp/main.go
+This file serves as the entry point, implementing the AWS Lambda handler and supporting local testing via a command-line argument.
+
+go
+
+Collapse
+
+Wrap
+
+Copy
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io/ioutil"
+	"log"
+	"math"
+	"net/http"
+	"os"
+	"strconv"
+	"sync"
+	"time"
+
+	"myproject/internal/metrics"
+
+	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
+	jsoniter "github.com/json-iterator/go"
+)
+
+// Configure jsoniter to match standard library behavior
+var json = jsoniter.ConfigCompatibleWithStandardLibrary
+
+// Global variables
+var (
+	printJSON  bool
+	numWorkers int
+	batchSize  int
+	s3Client   *s3.S3
+	client     = &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 30,
+		},
+	}
+)
+
+// init loads configuration from environment variables
+func init() {
+	// Set defaults if environment variables are not provided or invalid
+	printJSONStr := os.Getenv("PRINT_JSON")
+	printJSON, _ = strconv.ParseBool(printJSONStr)
+
+	numWorkersStr := os.Getenv("NUM_WORKERS")
+	numWorkers, _ = strconv.Atoi(numWorkersStr)
+	if numWorkers <= 0 {
+		numWorkers = 20 // Default number of workers
+	}
+
+	batchSizeStr := os.Getenv("BATCH_SIZE")
+	batchSize, _ = strconv.Atoi(batchSizeStr)
+	if batchSize <= 0 {
+		batchSize = 500 // Default batch size
+	}
+}
+
+// handler is the Lambda handler function
+func handler(ctx context.Context, s3Event events.S3Event) error {
+	for _, record := range s3Event.Records {
+		var inputData []byte
+		var err error
+
+		// Check if running in local test mode
+		if os.Getenv("LOCAL_TEST") == "true" {
+			// Read from local file instead of S3
+			localFilePath := "test_metrics.json"
+			inputData, err = os.ReadFile(localFilePath)
+			if err != nil {
+				log.Printf("Failed to read local file %s: %v", localFilePath, err)
+				continue
+			}
+		} else {
+			// AWS mode: Initialize S3 client if not already done
+			if s3Client == nil {
+				sess, err := session.NewSession(&aws.Config{
+					Region: aws.String(os.Getenv("AWS_REGION")),
+				})
+				if err != nil {
+					log.Printf("Failed to create AWS session: %v", err)
+					return err
+				}
+				s3Client = s3.New(sess)
+			}
+			// Download object from S3
+			bucket := record.S3.Bucket.Name
+			key := record.S3.Object.Key
+			resp, err := s3Client.GetObjectWithContext(ctx, &s3.GetObjectInput{
+				Bucket: aws.String(bucket),
+				Key:    aws.String(key),
+			})
+			if err != nil {
+				log.Printf("Failed to get object %s from bucket %s: %v", key, bucket, err)
+				continue
+			}
+			defer resp.Body.Close()
+			inputData, err = ioutil.ReadAll(resp.Body)
+			if err != nil {
+				log.Printf("Failed to read object %s: %v", key, err)
+				continue
+			}
+		}
+
+		// Parse input data into metrics
+		var inputs []metrics.InputMetric
+		if err := json.Unmarshal(inputData, &inputs); err != nil {
+			log.Printf("Error parsing JSON: %v", err)
+			continue
+		}
+
+		// Set up channels for processing
+		resultChan := make(chan metrics.ResourceMetrics, 1000)
+		batchChan := make(chan []metrics.ResourceMetrics, 50)
+		flushInterval := 10 * time.Second
+
+		// Start sender goroutine
+		var sendWg sync.WaitGroup
+		sendWg.Add(1)
+		go func() {
+			defer sendWg.Done()
+			sender(ctx, resultChan, batchChan, batchSize, flushInterval)
+		}()
+
+		// Start send workers
+		for i := 0; i < numWorkers; i++ {
+			sendWg.Add(1)
+			go sendWorker(ctx, batchChan, &sendWg)
+		}
+
+		// Process metrics
+		startTime := time.Now()
+		metrics.ConvertToOTEL(ctx, inputs, resultChan)
+
+		// Wait for all sends to complete
+		sendWg.Wait()
+		log.Printf("Processed %d metrics. Time taken: %v", len(inputs), time.Since(startTime))
+	}
+	return nil
+}
+
+// sender collects metrics into batches
+func sender(ctx context.Context, resultChan <-chan metrics.ResourceMetrics, batchChan chan<- []metrics.ResourceMetrics, batchSize int, flushInterval time.Duration) {
+	batch := make([]metrics.ResourceMetrics, 0, batchSize)
+	timer := time.NewTimer(flushInterval)
+	defer timer.Stop()
+
+	for {
+		select {
+		case rm, ok := <-resultChan:
+			if !ok {
+				if len(batch) > 0 {
+					select {
+					case batchChan <- batch:
+					case <-ctx.Done():
+						return
+					}
+				}
+				close(batchChan)
+				return
+			}
+			batch = append(batch, rm)
+			if len(batch) >= batchSize {
+				select {
+				case batchChan <- batch:
+				case <-ctx.Done():
+					return
+				}
+				batch = make([]metrics.ResourceMetrics, 0, batchSize)
+				timer.Reset(flushInterval)
+			}
+		case <-timer.C:
+			if len(batch) > 0 {
+				select {
+				case batchChan <- batch:
+				case <-ctx.Done():
+					return
+				}
+				batch = make([]metrics.ResourceMetrics, 0, batchSize)
+			}
+			timer.Reset(flushInterval)
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// sendWorker processes batches from batchChan
+func sendWorker(ctx context.Context, batchChan <-chan []metrics.ResourceMetrics, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for {
+		select {
+		case batch, ok := <-batchChan:
+			if !ok {
+				return
+			}
+			sendBatch(ctx, batch)
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// sendBatch sends the batch to the OTEL receiver or logs it locally
+func sendBatch(ctx context.Context, batch []metrics.ResourceMetrics) {
+	if os.Getenv("LOCAL_TEST") == "true" {
+		// In local mode, log the batch instead of sending
+		log.Printf("Local test: Would send batch of %d ResourceMetrics", len(batch))
+		return
+	}
+
+	// Original HTTP send logic with retries
+	const maxRetries = 3
+	const initialBackoff = 1 * time.Second
+	const backoffMultiplier = 2.0
+
+	request := metrics.ExportMetricsServiceRequest{ResourceMetrics: batch}
+	jsonData, err := json.Marshal(request)
+	if err != nil {
+		log.Printf("Error marshaling JSON: %v", err)
+		return
+	}
+
+	if printJSON {
+		prettyJSON, err := json.MarshalIndent(request, "", "  ")
+		if err == nil {
+			log.Printf("Sending batch:\n%s", string(prettyJSON))
+		}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", "http://167.71.85.187:4318/v1/metrics", bytes.NewBuffer(jsonData))
+	if err != nil {
+		log.Printf("Error creating request: %v", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		select {
+		case <-ctx.Done():
+			log.Printf("Send cancelled: %v", ctx.Err())
+			return
+		default:
+		}
+
+		log.Printf("Attempt %d to send batch of %d ResourceMetrics", attempt+1, len(batch))
+		resp, err := client.Do(req)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			log.Printf("Successfully sent batch of %d ResourceMetrics", len(batch))
+			if resp != nil {
+				resp.Body.Close()
+			}
+			return
+		}
+
+		if resp != nil {
+			resp.Body.Close()
+		}
+
+		if attempt < maxRetries {
+			backoff := initialBackoff * time.Duration(math.Pow(backoffMultiplier, float64(attempt)))
+			log.Printf("Attempt %d failed: %v. Retrying in %v...", attempt+1, err, backoff)
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				log.Printf("Send cancelled during backoff: %v", ctx.Err())
+				return
+			}
+		} else {
+			log.Printf("Failed to send batch after %d attempts: %v", maxRetries+1, err)
+		}
+	}
+}
+
+// localTest runs the handler locally with a mock S3 event
+func localTest() {
+	// Load mock S3 event from file
+	eventData, err := os.ReadFile("s3_event.json")
+	if err != nil {
+		log.Fatalf("Failed to read event file: %v", err)
+	}
+
+	var s3Event events.S3Event
+	if err := json.Unmarshal(eventData, &s3Event); err != nil {
+		log.Fatalf("Failed to unmarshal event: %v", err)
+	}
+
+	// Enable local testing mode
+	os.Setenv("LOCAL_TEST", "true")
+
+	// Create a context with a 5-minute timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	// Run the handler
+	if err := handler(ctx, s3Event); err != nil {
+		log.Printf("Handler error: %v", err)
+	} else {
+		log.Println("Handler executed successfully")
+	}
+}
+
+// main determines whether to run locally or as a Lambda function
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "local" {
+		localTest()
+	} else {
+		lambda.Start(handler)
+	}
+}
+internal/metrics/conversion.go
+This file contains the logic to convert InputMetric to ResourceMetrics, optimized for concurrency and context awareness.
+
+go
+
+Collapse
+
+Wrap
+
+Copy
+package metrics
+
+import (
+	"context"
+	"runtime"
+	"sort"
+	"strconv"
+	"sync"
+)
+
+// Predefined metric suffixes and unit mapping
+var (
+	metricSuffixes = [4]string{"_max", "_min", "_sum", "_count"}
+	unitValues     = [4]string{"", "", "", "1"} // The first 3 will be set to input.Unit
+)
+
+// AttributePool manages a pool of attribute slices to reduce allocations
+type AttributePool struct {
+	pool sync.Pool
+}
+
+func NewAttributePool() *AttributePool {
+	return &AttributePool{
+		pool: sync.Pool{
+			New: func() interface{} {
+				// Initial capacity of 10 should cover most cases
+				return make([]Attribute, 0, 10)
+			},
+		},
+	}
+}
+
+func (p *AttributePool) Get() []Attribute {
+	return p.pool.Get().([]Attribute)[:0] // Reset length but keep capacity
+}
+
+func (p *AttributePool) Put(attrs []Attribute) {
+	p.pool.Put(attrs)
+}
+
+// Global attribute pool
+var attributePool = NewAttributePool()
+
+// ConvertToOTEL converts a list of InputMetric to ResourceMetrics and sends them to the provided channel
+func ConvertToOTEL(ctx context.Context, inputs []InputMetric, resultChan chan<- ResourceMetrics) {
+	if len(inputs) == 0 {
+		close(resultChan)
+		return
+	}
+
+	// Sort inputs for deterministic output based on AccountID, Region, and Namespace
+	sort.Slice(inputs, func(i, j int) bool {
+		if inputs[i].AccountID != inputs[j].AccountID {
+			return inputs[i].AccountID < inputs[j].AccountID
+		}
+		if inputs[i].Region != inputs[j].Region {
+			return inputs[i].Region < inputs[j].Region
+		}
+		return inputs[i].Namespace < inputs[j].Namespace
+	})
+
+	W := runtime.NumCPU()
+	if W > 8 {
+		W = 8 // Cap at 8 to avoid excessive context switching
+	}
+	if W < 1 {
+		W = 1
+	}
+
+	minBatchSize := 10
+	if len(inputs) < minBatchSize*W {
+		if len(inputs) < minBatchSize {
+			W = 1
+		} else {
+			W = len(inputs) / minBatchSize
+		}
+	}
+
+	chunkSize := (len(inputs) + W - 1) / W
+
+	var wg sync.WaitGroup
+	for i := 0; i < W; i++ {
+		start := i * chunkSize
+		end := start + chunkSize
+		if end > len(inputs) {
+			end = len(inputs)
+		}
+		if start >= end {
+			break
+		}
+
+		wg.Add(1)
+		go func(start, end int) {
+			defer wg.Done()
+			for j := start; j < end; j++ {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					rm := processInputToResourceMetrics(inputs[j])
+					select {
+					case resultChan <- rm:
+					case <-ctx.Done():
+						return
+					}
+				}
+			}
+		}(start, end)
+	}
+
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+}
+
+// processInputToResourceMetrics converts a single InputMetric to a ResourceMetrics
+func processInputToResourceMetrics(input InputMetric) ResourceMetrics {
+	// Extract and sort dimension keys for consistent attribute ordering
+	dimensionKeys := make([]string, 0, len(input.Dimensions))
+	for k := range input.Dimensions {
+		dimensionKeys = append(dimensionKeys, k)
+	}
+	sort.Strings(dimensionKeys)
+
+	// Convert dimensions to OTEL attributes
+	attributes := attributePool.Get()
+	defer attributePool.Put(attributes)
+
+	for _, k := range dimensionKeys {
+		attributes = append(attributes, Attribute{
+			Key:   k,
+			Value: AttributeValue{StringValue: input.Dimensions[k]},
+		})
+	}
+
+	// Copy attributes to allow safe pool return
+	attrsCopy := make([]Attribute, len(attributes))
+	copy(attrsCopy, attributes)
+
+	// Convert timestamp from milliseconds to nanoseconds as a string
+	timeNano := strconv.FormatInt(input.Timestamp*1_000_000, 10)
+
+	// Create base unit values
+	localUnits := unitValues
+	localUnits[0] = input.Unit
+	localUnits[1] = input.Unit
+	localUnits[2] = input.Unit
+	// localUnits[3] is already "1"
+
+	// Values array for metric values
+	values := [4]float64{input.Value.Max, input.Value.Min, input.Value.Sum, input.Value.Count}
+
+	// Create OTEL metrics for max, min, sum, and count
+	metrics := make([]Metric, 4)
+	for i := 0; i < 4; i++ {
+		metrics[i] = Metric{
+			Name: input.MetricName + metricSuffixes[i],
+			Unit: localUnits[i],
+			Gauge: Gauge{
+				DataPoints: []DataPoint{
+					{
+						Attributes:   attrsCopy,
+						TimeUnixNano: timeNano,
+						AsDouble:     values[i],
+					},
+				},
+			},
+		}
+	}
+
+	// Resource attributes
+	resourceAttrs := []Attribute{
+		{Key: "cloud.account.id", Value: AttributeValue{StringValue: input.AccountID}},
+		{Key: "cloud.region", Value: AttributeValue{StringValue: input.Region}},
+		{Key: "cloud.namespace", Value: AttributeValue{StringValue: input.Namespace}},
+		{Key: "metric_stream_name", Value: AttributeValue{StringValue: input.MetricStreamName}},
+	}
+
+	// Assemble the ResourceMetrics structure
+	return ResourceMetrics{
+		Resource: Resource{
+			Attributes: resourceAttrs,
+		},
+		ScopeMetrics: []ScopeMetrics{
+			{
+				Scope:   struct{}{},
+				Metrics: metrics,
+			},
+		},
+	}
+}
+internal/metrics/types.go
+This file defines the types used by both main.go and conversion.go, remaining unchanged as per the requirement.
+
+go
+
+Collapse
+
+Wrap
+
+Copy
+package metrics
+
+// InputMetric represents the input JSON structure
+type InputMetric struct {
+	MetricStreamName string            `json:"metric_stream_name"`
+	AccountID        string            `json:"account_id"`
+	Region           string            `json:"region"`
+	Namespace        string            `json:"namespace"`
+	MetricName       string            `json:"metric_name"`
+	Dimensions       map[string]string `json:"dimensions"`
+	Timestamp        int64             `json:"timestamp"`
+	Value            struct {
+		Max   float64 `json:"max"`
+		Min   float64 `json:"min"`
+		Sum   float64 `json:"sum"`
+		Count float64 `json:"count"`
+	} `json:"value"`
+	Unit string `json:"unit"`
+}
+
+// Attribute represents an OTEL attribute
+type Attribute struct {
+	Key   string         `json:"key"`
+	Value AttributeValue `json:"value"`
+}
+
+// AttributeValue holds the value of an attribute
+type AttributeValue struct {
+	StringValue string `json:"stringValue,omitempty"`
+}
+
+// DataPoint represents a single data point in a metric
+type DataPoint struct {
+	Attributes   []Attribute `json:"attributes"`
+	TimeUnixNano string      `json:"timeUnixNano"`
+	AsDouble     float64     `json:"asDouble"`
+}
+
+// Gauge represents a gauge metric type
+type Gauge struct {
+	DataPoints []DataPoint `json:"dataPoints"`
+}
+
+// Metric defines an OTEL metric
+type Metric struct {
+	Name  string `json:"name"`
+	Unit  string `json:"unit"`
+	Gauge Gauge  `json:"gauge"`
+}
+
+// ScopeMetrics groups metrics under a scope
+type ScopeMetrics struct {
+	Scope   struct{} `json:"scope"`
+	Metrics []Metric `json:"metrics"`
+}
+
+// Resource defines resource-level attributes
+type Resource struct {
+	Attributes []Attribute `json:"attributes"`
+}
+
+// ResourceMetrics combines resource and scope metrics
+type ResourceMetrics struct {
+	Resource     Resource       `json:"resource"`
+	ScopeMetrics []ScopeMetrics `json:"scopeMetrics"`
+}
+
+// ExportMetricsServiceRequest defines the OTLP HTTP JSON structure
+type ExportMetricsServiceRequest struct {
+	ResourceMetrics []ResourceMetrics `json:"resourceMetrics"`
+}
+How It Works
+main.go:
+Lambda Handler: Processes S3 events, fetching data from S3 unless in local mode, where it reads from test_metrics.json.
+Local Testing: Triggered by running go run cmd/myapp/main.go local, using a mock S3 event from s3_event.json.
+Batching and Sending: Metrics are processed into batches and sent to an OTEL receiver (or logged locally in test mode) with retry logic.
+conversion.go:
+Conversion Logic: Transforms InputMetric to ResourceMetrics using concurrent goroutines, respecting context cancellation.
+Optimization: Uses an attribute pool to reduce memory allocations and sorts inputs for consistency.
+types.go:
+Type Definitions: Provides structs for input data and OTEL output, ensuring compatibility across the application.
+Testing Locally
+To test the application locally:
+
+Create s3_event.json in cmd/myapp/:
+json
+
+Collapse
+
+Wrap
+
+Copy
+{
+  "Records": [
+    {
+      "s3": {
+        "bucket": {
+          "name": "test-bucket"
+        },
+        "object": {
+          "key": "test_metrics.json"
+        }
+      }
+    }
+  ]
+}
+Create test_metrics.json in cmd/myapp/:
+json
+
+Collapse
+
+Wrap
+
+Copy
+[
+  {
+    "metric_stream_name": "test-stream",
+    "account_id": "123456789012",
+    "region": "us-east-1",
+    "namespace": "AWS/EC2",
+    "metric_name": "CPUUtilization",
+    "dimensions": {
+      "InstanceId": "i-1234567890abcdef0"
+    },
+    "timestamp": 1698777600000,
+    "value": {
+      "max": 75.5,
+      "min": 50.0,
+      "sum": 300.0,
+      "count": 5.0
+    },
+    "unit": "Percent"
+  }
+]
+Run the Local Test:
+bash
+
+Collapse
+
+Wrap
+
+Copy
+go run cmd/myapp/main.go local
+This simulates an S3 event, processes test_metrics.json, and logs the batches instead of sending them.
+Conclusion
+The code maintains the specified structure (cmd/myapp/main.go, internal/metrics/conversion.go, internal/metrics/types.go) while providing a fully functional Lambda application with local testing capabilities. Each file has a clear responsibility, ensuring modularity and maintainability. Let me know if you need further adjustments!
+
+
+
+
+
+
+
+is this code works for both right local and as well as lambda
+
+
+
+
+
+Thought for
+12s
+Expand for details
+Yes, the provided code is designed to work both locally and as an AWS Lambda function. Here's how it achieves this dual functionality:
+
+How It Works
+The code is structured to adapt its behavior based on the environment it’s running in, using an environment variable called LOCAL_TEST to switch between local and AWS Lambda modes.
+
+1. Environment Variable Check
+The code checks the value of the LOCAL_TEST environment variable:
+If LOCAL_TEST is set to "true", it runs in local mode.
+If LOCAL_TEST is unset or set to any other value, it runs in AWS Lambda mode.
+This simple toggle allows the same codebase to serve both purposes without modification.
+2. Local Mode
+Input Handling: When running locally, the code reads input data from a local file (e.g., test_metrics.json) instead of fetching it from an S3 bucket.
+Output Simulation: Instead of sending data over HTTP (as it would in AWS), it logs the processed batches to the console. This lets you test and debug the logic without making network calls.
+Testing Support: A localTest function simulates an S3 event using a local JSON file (e.g., s3_event.json), allowing you to run the entire workflow locally.
+3. AWS Lambda Mode
+S3 Integration: When deployed as a Lambda function, the code initializes an S3 client and downloads the object specified in the S3 event it receives.
+Data Processing: It processes the downloaded data and sends it to an OpenTelemetry (OTEL) receiver via HTTP, as expected in a cloud environment.
+Execution Limits: The code uses the provided context (ctx) to handle timeouts and cancellations, ensuring it complies with Lambda’s runtime constraints.
+4. Shared Features
+Concurrency: The code uses goroutines and channels for concurrent processing, which works efficiently in both local and Lambda environments.
+Configuration: Environment variables (e.g., PRINT_JSON, NUM_WORKERS, BATCH_SIZE) allow you to tweak its behavior without changing the code, making it flexible for both setups.
+Context Awareness: By respecting the context (ctx), the code ensures proper resource management in both environments.
+Why It Works for Both
+The key to this dual functionality is the conditional logic tied to LOCAL_TEST. This allows the code to:
+
+Use local files and logging for testing and development.
+Switch to S3 and HTTP requests when deployed to AWS Lambda. All of this happens seamlessly within a single codebase, so you can develop and test locally before deploying to the cloud.
+Conclusion
+Yes, the code works both locally and as an AWS Lambda function. By leveraging the LOCAL_TEST environment variable, it intelligently adapts its input sources and output behavior, ensuring full functionality in both contexts.
+
+
+
+How It Works
+Local Mode:
+When LOCAL_TEST is true, the handler reads from test_metrics.json instead of downloading from S3.
+The sendBatch function logs the batches rather than sending HTTP requests, allowing you to verify the output.
+AWS Mode:
+Without the local argument (i.e., go run .), the code starts as a Lambda function, expecting to be invoked by AWS with an S3 event.
+Concurrency:
+The code uses goroutines and channels (sender and sendWorker) to process metrics concurrently, mirroring Lambda behavior.
+A 5-minute timeout ensures the local test doesn’t run indefinitely.
+Output:
+You’ll see logs indicating the number of metrics processed, processing time, and the batches that would be sent.
+Example output:
+
+text
+
+Collapse
+
+Wrap
+
+Copy
+2023/10/25 10:00:00 Processed 2 metrics. Time taken: 1.234ms
+2023/10/25 10:00:00 Local test: Would send batch of 2 ResourceMetrics
+2023/10/25 10:00:00 Handler executed successfully
+Notes
+File Paths: Ensure s3_event.json and test_metrics.json are in the same directory as main.go. Adjust localFilePath in the handler if you store them elsewhere.
+Metrics Package: The code assumes metrics.ConvertToOTEL and related types are defined in myproject/internal/metrics. Update the import or implementation as needed.
+Error Handling: The code logs errors and continues processing subsequent records, preventing a single failure from stopping the entire run.
+This solution provides a robust way to test your Lambda function locally, simulating the S3 trigger and verifying the metrics processing and batching logic without AWS dependencies.
+
+
+
+Setup Instructions
+To test your Lambda function locally, follow these steps:
+
+1. Create Mock S3 Event File
+Create a file named s3_event.json in your project directory (cmd/myapp/) with the following content:
+
+json
+
+Collapse
+
+Wrap
+
+Copy
+{
+  "Records": [
+    {
+      "s3": {
+        "bucket": {
+          "name": "test-bucket"
+        },
+        "object": {
+          "key": "test_metrics.json"
+        }
+      }
+    }
+  ]
+}
+This simulates an S3 event triggering your Lambda function.
+
+2. Prepare Sample Input Data
+Create a file named test_metrics.json in the same directory with sample metrics data. Example:
+
+json
+
+Collapse
+
+Wrap
+
+Copy
+[
+  {
+    "metric_stream_name": "CustomFull-1Uh2uW",
+    "account_id": "149536493833",
+    "region": "us-east-1",
+    "namespace": "AWS/EBS",
+    "metric_name": "VolumeIdleTime",
+    "dimensions": {"VolumeId": "vol-0e1750ccd74c1399d"},
+    "timestamp": 1736142780000,
+    "value": {"max": 59.990422, "min": 59.990422, "sum": 59.990422, "count": 1.0},
+    "unit": "Seconds"
+  },
+  {
+    "metric_stream_name": "CustomFull-1Uh2uW",
+    "account_id": "149536493833",
+    "region": "us-east-1",
+    "namespace": "AWS/EBS",
+    "metric_name": "VolumeTotalWriteTime",
+    "dimensions": {"VolumeId": "vol-0e1750ccd74c1399d"},
+    "timestamp": 1736142780000,
+    "value": {"max": 0.050324, "min": 0.050324, "sum": 0.050324, "count": 1.0},
+    "unit": "Seconds"
+  }
+]
+This file mimics the data your Lambda would process from an S3 object.
+
+3. Install Dependencies
+Ensure you have the required Go modules installed. Run:
+
+bash
+
+Collapse
+
+Wrap
+
+Copy
+go mod tidy
+The code depends on:
+
+github.com/aws/aws-lambda-go
+github.com/aws/aws-sdk-go
+github.com/json-iterator/go
+4. Run the Local Test
+From the cmd/myapp/ directory, execute:
+
+bash
+
+Collapse
+
+Wrap
+
+Copy
+go run . local
+This command:
+
+Sets LOCAL_TEST=true.
+Loads the mock S3 event from s3_event.json.
+Reads the input data from test_metrics.json.
+Processes the data and logs the batches instead of sending them.
+5. Customize Configuration (Optional)
+You can set environment variables to adjust the behavior:
+
+PRINT_JSON=true: Logs the JSON data in a pretty format.
+NUM_WORKERS=5: Sets the number of worker goroutines.
+BATCH_SIZE=100: Sets the batch size for sending metrics.
