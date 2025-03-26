@@ -1,0 +1,3 @@
+curl -X POST http://<otel-collector-ip>:4318/v1/metrics \
+  -H "Content-Type: application/json" \
+  -d '{"resourceMetrics":[{"resource":{},"scopeMetrics":[{"metrics":[{"name":"test_metric","unit":"","gauge":{"dataPoints":[{"asDouble":1.0}]}]}]}]}'
