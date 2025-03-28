@@ -1,0 +1,929 @@
+{
+  "resourceMetrics": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "cloud.provider",
+            "value": {
+              "stringValue": "aws"
+            }
+          },
+          {
+            "key": "cloud.account.id",
+            "value": {
+              "stringValue": "149536493833"
+            }
+          },
+          {
+            "key": "cloud.region",
+            "value": {
+              "stringValue": "us-east-1"
+            }
+          }
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "scope": {
+            "name": "cloudwatch.metric_stream",
+            "version": "1.0.0",
+            "attributes": [
+              {
+                "key": "metric_stream_name",
+                "value": {
+                  "stringValue": "CustomFull-1Uh2uW"
+                }
+              }
+            ]
+          },
+          "metrics": [
+            {
+              "name": "VolumeIdleTime",
+              "description": "Converted CloudWatch metric to Histogram",
+              "unit": "Seconds",
+              "histogram": {
+                "aggregationTemporality": 2,
+                "dataPoints": [
+                  {
+                    "startTimeUnixNano": "1736142780000000000",
+                    "timeUnixNano": "1736142780000000000",
+                    "count": 1,
+                    "sum": 59.990422,
+                    "bucketCounts": [0, 0, 0, 0, 0, 1],
+                    "explicitBounds": [10, 20, 30, 40, 50],
+                    "min": 59.990422,
+                    "max": 59.990422,
+                    "attributes": [
+                      {
+                        "key": "VolumeId",
+                        "value": {
+                          "stringValue": "vol-0e1750ccd74c1399d"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+
+Visual Outline
+Below is a more visual breakdown of the structure:
+
+json
+Copy
+{
+  "resourceMetrics": [               // A list of shipping containers
+    {
+      "resource": {                  // Container labels
+        "attributes": [ /* e.g. "service.name": "my.service" */ ]
+      },
+      "scopeMetrics": [              // A list of boxes in this container
+        {
+          "scope": {                 // Box label: "my.library" version "1.0.0"
+            "name": "my.library",
+            "version": "1.0.0",
+            "attributes": [ /* some scope attribute */ ]
+          },
+          "metrics": [               // The items in this box
+            { /* my.counter metric */ },
+            { /* my.gauge metric */ },
+            { /* my.histogram metric */ },
+            { /* my.exponential.histogram metric */ }
+          ]
+        }
+      ]
+    }
+  ]
+}
+resourceMetrics: We have one container.
+
+resource: Tells us it’s from "service.name": "my.service".
+
+scopeMetrics: We have one scope (box). The scope is "my.library" version "1.0.0".
+
+metrics: Inside that scope (box), we list four separate metrics (items).
+
+Step by Step
+Resource = “Hey, these metrics all come from a service named my.service.”
+
+Scope = “They were all produced by the library named my.library (version 1.0.0).”
+
+Metrics Array = “Here are the actual measurements we took.”
+
+my.counter (a running total).
+
+my.gauge (current snapshot).
+
+my.histogram (distribution across explicit buckets).
+
+my.exponential.histogram (distribution across automatically scaled buckets).
+
+Why So Many Fields?
+Each metric type has its own format:
+
+Sum has isMonotonic, aggregationTemporality, and an array of data points with asDouble.
+
+Gauge just has gauge.dataPoints with a single measured value.
+
+Histogram has bucketCounts, explicitBounds, min, max, sum, count.
+
+ExponentialHistogram uses scale, zeroCount, positive.bucketCounts, etc.
+
+Those are just different ways to store numbers in a time series. OpenTelemetry supports them all, so you can pick the best type for each kind of measurement.
+
+Short Answer
+This JSON is one payload with four different metrics that illustrate different metric types in OpenTelemetry. The structure is:
+
+resourceMetrics → top-level grouping by resource.
+
+scopeMetrics → grouping by instrumentation library.
+
+metrics → actual measurements, each with a different type: sum, gauge, histogram, or exponential histogram.
+
+If you only need counters, you focus on the Sum section. If you only need distributions, you focus on Histogram or Exponential Histogram, and so on. The snippet shows them all together as an example.
+
+
+
+
+
+
+You said:
+you forgot resource in analogy
+
+
+
+2/2
+
+ChatGPT said:
+Reasoned for 4 seconds
+Here’s a shipping analogy that explicitly includes the resource:
+
+Resource = Shipping Container
+
+The container has an identifying label (like "service.name": "my.service").
+
+All cargo inside that container shares this overarching context (i.e., these metrics are from the same service).
+
+Scope = Box Inside the Container
+
+Each box also has a label (the scope), e.g. "name": "my.library", "version": "1.0.0".
+
+This label tells us which specific library or instrumentation produced the metrics in that box.
+
+Metrics = Items in the Box
+
+The box contains individual items (each item is a metric).
+
+For example:
+
+my.counter (Sum)
+
+my.gauge (Gauge)
+
+my.histogram (Histogram)
+
+my.exponential.histogram (Exponential Histogram)
+
+Each item (metric) has its own shape and properties:
+
+A Sum metric is like a “running total” item.
+
+A Gauge metric is a “current status” item.
+
+A Histogram metric is a “bucketed distribution” item with custom bucket edges.
+
+An Exponential Histogram is a “bucketed distribution” item that automatically scales the buckets.
+
+All of these items (metrics) live in one box (scope) which is inside one shipping container (resource). That’s why the JSON has:
+
+resourceMetrics → A list of containers. (In your example, just one container.)
+
+resource → The container’s labels (e.g., "service.name": "my.service").
+
+scopeMetrics → A list of boxes for that container (again, just one in the example).
+
+scope → The box’s label ("my.library", etc.).
+
+metrics → The items in that box (the four different metrics).
+
+In short:
+
+Resource = Shipping Container (overall context, e.g. “my.service”).
+
+Scope = Box Inside the Container (library/instrumentation name, version).
+
+Metrics = Items in the Box (each item is a different metric type).
+
+
+
+
+
+
+You said:
+{"metric_stream_name":"CustomFull-1Uh2uW","account_id":"149536493833","region":"us-east-1","namespace":"AWS/LAMBDA","metric_name":"VolumeIdleTime","dimensions":{"VolumeId":"vol-0e1750ccd74c1399d"},"timestamp":1736142780000,"value":{"max":59.990422,"min":59.990422,"sum":59.990422,"count":1.0},"unit":"Seconds"},
+convert this json
+
+
+ChatGPT said:
+Reasoned for 12 seconds
+Below is a single-metric OTLP JSON representation of your input:
+
+json
+Copy
+{
+  "resourceMetrics": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "cloud.account.id",
+            "value": {
+              "stringValue": "149536493833"
+            }
+          },
+          {
+            "key": "cloud.region",
+            "value": {
+              "stringValue": "us-east-1"
+            }
+          },
+          {
+            "key": "cloud.namespace",
+            "value": {
+              "stringValue": "AWS/LAMBDA"
+            }
+          },
+          {
+            "key": "metric_stream_name",
+            "value": {
+              "stringValue": "CustomFull-1Uh2uW"
+            }
+          }
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "scope": {},
+          "metrics": [
+            {
+              "name": "VolumeIdleTime",
+              "unit": "Seconds",
+              "exponentialHistogram": {
+                "aggregationTemporality": 1,
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {
+                        "key": "VolumeId",
+                        "value": {
+                          "stringValue": "vol-0e1750ccd74c1399d"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1736142780000000000",
+                    "timeUnixNano": "1736142780000000000",
+                    "scale": 0,
+                    "zeroCount": 1,
+                    "positive": {
+                      "offset": 0,
+                      "bucketCounts": []
+                    },
+                    "negative": {
+                      "offset": 0,
+                      "bucketCounts": []
+                    },
+                    "sum": 59.990422,
+                    "count": 1,
+                    "min": 59.990422,
+                    "max": 59.990422,
+                    "zeroThreshold": 0
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+Explanation
+resource: Attributes describing the environment from which the metric originates:
+
+cloud.account.id = 149536493833
+
+cloud.region = us-east-1
+
+cloud.namespace = AWS/LAMBDA
+
+metric_stream_name = CustomFull-1Uh2uW
+
+scopeMetrics: Contains an array of metrics. We leave the scope empty ({}) because this example doesn’t specify instrumentation library details.
+
+metrics: We have one metric:
+
+name = "VolumeIdleTime"
+
+unit = "Seconds"
+
+exponentialHistogram = The chosen metric type in this example.
+
+exponentialHistogram:
+
+aggregationTemporality = 1 (commonly means “cumulative” in OTLP).
+
+dataPoints = A list with one data point, including:
+
+attributes: A dimension named "VolumeId" with value "vol-0e1750ccd74c1399d".
+
+startTimeUnixNano and timeUnixNano: Both set to the timestamp (1736142780 seconds) converted to nanoseconds by multiplying by 1_000_000.
+
+scale = 0 → minimal bucket resolution, because min == max.
+
+zeroCount = 1 → with only one data point, we lump it into the zero bucket.
+
+positive and negative are empty because we’re not distributing multiple values into buckets.
+
+sum = 59.990422, count = 1, min = 59.990422, max = 59.990422.
+
+This demonstrates how a single input metric can be represented as an Exponential Histogram in OpenTelemetry’s OTLP JSON format, with extra resource attributes for account ID, region, namespace, etc.
+
+
+
+
+
+
+You said:
+give me  in histogram
+
+
+ChatGPT said:
+Reasoned for a second
+Below is an OTLP JSON example representing your single input metric as a standard Histogram (i.e., using “explicit bounds”), instead of an exponential histogram. For simplicity, we’ll store the entire single data point in one bucket.
+
+The Input
+json
+Copy
+{
+  "metric_stream_name": "CustomFull-1Uh2uW",
+  "account_id": "149536493833",
+  "region": "us-east-1",
+  "namespace": "AWS/LAMBDA",
+  "metric_name": "VolumeIdleTime",
+  "dimensions": {
+    "VolumeId": "vol-0e1750ccd74c1399d"
+  },
+  "timestamp": 1736142780000,
+  "value": {
+    "max": 59.990422,
+    "min": 59.990422,
+    "sum": 59.990422,
+    "count": 1.0
+  },
+  "unit": "Seconds"
+}
+We convert this to one histogram data point with:
+
+count = 1
+
+sum = 59.990422
+
+bucketCounts = [1] (all in one bucket)
+
+explicitBounds = [+∞] or some upper bound large enough to cover 59.990422
+
+(You can pick bounds however you like; we’ll demonstrate a single bound so everything goes into one bucket.)
+
+Example OTLP JSON Output (Histogram)
+json
+Copy
+{
+  "resourceMetrics": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "cloud.account.id",
+            "value": {
+              "stringValue": "149536493833"
+            }
+          },
+          {
+            "key": "cloud.region",
+            "value": {
+              "stringValue": "us-east-1"
+            }
+          },
+          {
+            "key": "cloud.namespace",
+            "value": {
+              "stringValue": "AWS/LAMBDA"
+            }
+          },
+          {
+            "key": "metric_stream_name",
+            "value": {
+              "stringValue": "CustomFull-1Uh2uW"
+            }
+          }
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "scope": {},
+          "metrics": [
+            {
+              "name": "VolumeIdleTime",
+              "unit": "Seconds",
+              "histogram": {
+                "aggregationTemporality": 1,
+                "dataPoints": [
+                  {
+                    "startTimeUnixNano": "1736142780000000000",
+                    "timeUnixNano": "1736142780000000000",
+                    "count": 1,
+                    "sum": 59.990422,
+                    "bucketCounts": [1],
+                    "explicitBounds": [100000], 
+                    "min": 59.990422,
+                    "max": 59.990422,
+                    "attributes": [
+                      {
+                        "key": "VolumeId",
+                        "value": {
+                          "stringValue": "vol-0e1750ccd74c1399d"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+Field-by-Field Explanation
+resourceMetrics
+
+resource.attributes:
+
+"cloud.account.id" = "149536493833"
+
+"cloud.region" = "us-east-1"
+
+"cloud.namespace" = "AWS/LAMBDA"
+
+"metric_stream_name" = "CustomFull-1Uh2uW"
+These attributes describe the source context of the metric.
+
+scopeMetrics
+
+scope is empty here ({}). You could fill this in if you have specific library info.
+
+metrics
+
+name = "VolumeIdleTime", unit = "Seconds".
+
+histogram: This indicates a standard histogram with explicit bucket boundaries.
+
+histogram.aggregationTemporality = 1
+
+Typically means “cumulative” in OpenTelemetry terms.
+
+dataPoints: We have one data point.
+
+count = 1, sum = 59.990422.
+
+bucketCounts = [1]: We have only one bucket, and it contains exactly one data sample.
+
+explicitBounds = [100000]: A single boundary (100,000). This effectively creates two buckets:
+
+(
+−
+∞
+,
+100000
+]
+(−∞,100000]
+
+(
+100000
+,
++
+∞
+)
+(100000,+∞)
+Since we only define 1 element in bucketCounts, it actually means we’re only tracking that first bucket. Alternatively, if you want to properly represent two buckets, set bucketCounts to [1, 0].
+
+min = 59.990422, max = 59.990422: Both the same because there’s only one data point.
+
+startTimeUnixNano and timeUnixNano: Both 1736142780000 * 1,000,000 = 1736142780000000000.
+
+attributes: We add the dimension “VolumeId = vol-0e1750ccd74c1399d”.
+
+Note on bucketCounts and explicitBounds
+If you wanted one actual bucket, you might do explicitBounds = [] (empty), and bucketCounts = [1]. Then the entire range of values is effectively in one bucket.
+
+With explicitBounds = [X], you have two buckets: “≤ X” and “> X.” So in that case, you might do [1, 0] for bucketCounts if your single data point is ≤ X.
+
+If you want exactly one bucket that contains everything, set explicitBounds = [] and bucketCounts = [1]. For demonstration, the snippet above uses [100000] and [1], capturing the single value in the first bucket.
+
+Example with a Single Bucket
+If you truly want a single bucket, here’s an alternate snippet:
+
+json
+Copy
+{
+  "resourceMetrics": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "cloud.account.id",
+            "value": {
+              "stringValue": "149536493833"
+            }
+          },
+          {
+            "key": "cloud.region",
+            "value": {
+              "stringValue": "us-east-1"
+            }
+          },
+          {
+            "key": "cloud.namespace",
+            "value": {
+              "stringValue": "AWS/LAMBDA"
+            }
+          },
+          {
+            "key": "metric_stream_name",
+            "value": {
+              "stringValue": "CustomFull-1Uh2uW"
+            }
+          }
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "scope": {},
+          "metrics": [
+            {
+              "name": "VolumeIdleTime",
+              "unit": "Seconds",
+              "histogram": {
+                "aggregationTemporality": 1,
+                "dataPoints": [
+                  {
+                    "startTimeUnixNano": "1736142780000000000",
+                    "timeUnixNano": "1736142780000000000",
+                    "count": 1,
+                    "sum": 59.990422,
+                    "bucketCounts": [1],
+                    "explicitBounds": [],
+                    "min": 59.990422,
+                    "max": 59.990422,
+                    "attributes": [
+                      {
+                        "key": "VolumeId",
+                        "value": {
+                          "stringValue": "vol-0e1750ccd74c1399d"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+Here:
+
+explicitBounds = [] (no explicit boundary).
+
+bucketCounts = [1] (only one bucket).
+
+Everything is placed into that single bucket.
+
+Summary
+The snippet above shows how to represent your single data point as a standard histogram in OTLP JSON:
+
+No complex buckets since there’s just one data point.
+
+min, max, sum, count reflect the single measurement.
+
+The dimension (VolumeId) is included as an attribute at the data point level.
+
+The resource-level attributes (account_id, region, etc.) appear in the top resource.attributes.
+
+In a real scenario, if you have multiple data points or a range of values, you’d define multiple bounds in explicitBounds and fill bucketCounts accordingly. For this simple one-sample case, one bucket is enough.
+
+
+
+
+
+
+You said:
+what  was the prometheus outtput
+ChatGPT said:
+Reasoned for 15 seconds
+Below is an example of how your single data point could be represented as a Prometheus histogram. In Prometheus’ text exposition format, a histogram is broken into multiple series:
+
+*_bucket (with le labels)
+
+*_sum
+
+*_count
+
+1) The Original Input
+json
+Copy
+{
+  "metric_stream_name": "CustomFull-1Uh2uW",
+  "account_id": "149536493833",
+  "region": "us-east-1",
+  "namespace": "AWS/LAMBDA",
+  "metric_name": "VolumeIdleTime",
+  "dimensions": {
+    "VolumeId": "vol-0e1750ccd74c1399d"
+  },
+  "timestamp": 1736142780000,
+  "value": {
+    "max": 59.990422,
+    "min": 59.990422,
+    "sum": 59.990422,
+    "count": 1.0
+  },
+  "unit": "Seconds"
+}
+We have exactly one measurement: 59.990422. Below is a minimal histogram with two buckets:
+
+le="60"
+
+le="+Inf"
+
+Since 59.990422 < 60, it falls into both “<= 60” and “<= +Inf” buckets.
+
+2) Prometheus Text Format Example
+txt
+Copy
+# HELP VolumeIdleTime A histogram of VolumeIdleTime measurements
+# TYPE VolumeIdleTime histogram
+VolumeIdleTime_bucket{
+  VolumeId="vol-0e1750ccd74c1399d",
+  account_id="149536493833",
+  region="us-east-1",
+  metric_stream_name="CustomFull-1Uh2uW",
+  le="60"
+} 1
+VolumeIdleTime_bucket{
+  VolumeId="vol-0e1750ccd74c1399d",
+  account_id="149536493833",
+  region="us-east-1",
+  metric_stream_name="CustomFull-1Uh2uW",
+  le="+Inf"
+} 1
+VolumeIdleTime_sum{
+  VolumeId="vol-0e1750ccd74c1399d",
+  account_id="149536493833",
+  region="us-east-1",
+  metric_stream_name="CustomFull-1Uh2uW"
+} 59.990422
+VolumeIdleTime_count{
+  VolumeId="vol-0e1750ccd74c1399d",
+  account_id="149536493833",
+  region="us-east-1",
+  metric_stream_name="CustomFull-1Uh2uW"
+} 1
+Breakdown:
+HELP and TYPE lines
+
+# HELP VolumeIdleTime ...
+
+# TYPE VolumeIdleTime histogram
+
+Buckets
+Each *_bucket line has a label le (less than or equal to) defining that bucket’s upper bound:
+
+le="60" → This covers values ≤ 60. We have “1” sample here.
+
+le="+Inf" → The “catch-all” bucket for anything above 60. Also shows “1,” meaning that sample is cumulatively included in all buckets up to +Inf.
+
+Sum and Count
+
+VolumeIdleTime_sum → 59.990422. The total of all samples in this histogram.
+
+VolumeIdleTime_count → 1. The total number of measurements in the histogram.
+
+Additional Labels (Dimensions)
+
+VolumeId="vol-0e1750ccd74c1399d"
+
+account_id="149536493833"
+
+region="us-east-1"
+
+metric_stream_name="CustomFull-1Uh2uW"
+
+In Prometheus, these become part of the label set on each series.
+
+3) Important Notes
+Multiple Buckets
+
+Typically, you define several buckets to capture a distribution (e.g., le="5", le="10", le="25", le="60", le="+Inf", etc.).
+
+In this example, we used only 2 to keep it simple and show how a single data point fits.
+
+Sum and Count
+
+*_sum tracks the sum of all observed values.
+
+*_count tracks how many values were observed.
+
+For 1 data point of 59.990422, sum = 59.990422 and count = 1.
+
+Dimension vs. Resource Labels
+
+Prometheus does not differentiate “resource attributes” vs. “dimensions.” All become standard labels on the metric.
+
+Just be sure to keep label names valid (using _, no uppercase) if you want to be fully consistent with best practices. For demonstration, we’re showing them as-is.
+
+If You Only Want One Bucket
+If you truly want one bucket for everything, you might have only:
+
+txt
+Copy
+VolumeIdleTime_bucket{le="+Inf", ...} 1
+VolumeIdleTime_sum{...} 59.990422
+VolumeIdleTime_count{...} 1
+But, by convention, Prometheus histograms always come with at least one finite boundary plus +Inf. That’s why the minimal example typically has two lines for _bucket: one with le="60" (or some boundary) and one with le="+Inf".
+
+Summary
+A Prometheus histogram in the text exposition format always produces multiple time series with _bucket, _sum, and _count.
+
+You attach dimension / resource info as labels.
+
+For a single data point near 60 seconds, we can choose a boundary of 60. That data point increments the “<= 60” bucket and the +Inf bucket, with sum = 59.990422 and count = 1.
+
+
+
+
+
+
+You said:
+{
+  "resourceMetrics": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "cloud.account.id",
+            "value": {
+              "stringValue": "149536493833"
+            }
+          },
+          {
+            "key": "cloud.region",
+            "value": {
+              "stringValue": "us-east-1"
+            }
+          },
+          {
+            "key": "cloud.namespace",
+            "value": {
+              "stringValue": "AWS/LAMBDA"
+            }
+          },
+          {
+            "key": "metric_stream_name",
+            "value": {
+              "stringValue": "CustomFull-1Uh2uW"
+            }
+          }
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "scope": {},
+          "metrics": [
+            {
+              "name": "VolumeIdleTime",
+              "unit": "Seconds",
+              "histogram": {
+                "aggregationTemporality": 1,
+                "dataPoints": [
+                  {
+                    "startTimeUnixNano": "1736142780000000000",
+                    "timeUnixNano": "1736142780000000000",
+                    "count": 1,
+                    "sum": 59.990422,
+                    "bucketCounts": [1],
+                    "explicitBounds": [100000], 
+                    "min": 59.990422,
+                    "max": 59.990422,
+                    "attributes": [
+                      {
+                        "key": "VolumeId",
+                        "value": {
+                          "stringValue": "vol-0e1750ccd74c1399d"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+prometheus output for this
+
+
+
+ChatGPT said:
+Reasoned for 11 seconds
+Below is one possible Prometheus text format output for your single histogram data point. It includes two buckets:
+
+le="100000" (the explicit bound)
+
+le="+Inf" (the catch-all bucket)
+
+Because the single value (59.990422) is ≤ 100000, both buckets count 1 sample (cumulative behavior). We also show _sum and _count series.
+
+txt
+Copy
+# HELP VolumeIdleTime A histogram of VolumeIdleTime measurements
+# TYPE VolumeIdleTime histogram
+VolumeIdleTime_bucket{
+  cloud_account_id="149536493833",
+  cloud_region="us-east-1",
+  cloud_namespace="AWS/LAMBDA",
+  metric_stream_name="CustomFull-1Uh2uW",
+  VolumeId="vol-0e1750ccd74c1399d",
+  le="100000"
+} 1
+VolumeIdleTime_bucket{
+  cloud_account_id="149536493833",
+  cloud_region="us-east-1",
+  cloud_namespace="AWS/LAMBDA",
+  metric_stream_name="CustomFull-1Uh2uW",
+  VolumeId="vol-0e1750ccd74c1399d",
+  le="+Inf"
+} 1
+VolumeIdleTime_sum{
+  cloud_account_id="149536493833",
+  cloud_region="us-east-1",
+  cloud_namespace="AWS/LAMBDA",
+  metric_stream_name="CustomFull-1Uh2uW",
+  VolumeId="vol-0e1750ccd74c1399d"
+} 59.990422
+VolumeIdleTime_count{
+  cloud_account_id="149536493833",
+  cloud_region="us-east-1",
+  cloud_namespace="AWS/LAMBDA",
+  metric_stream_name="CustomFull-1Uh2uW",
+  VolumeId="vol-0e1750ccd74c1399d"
+} 1
+Explanation
+Histogram Series
+
+_bucket: Prometheus histograms break down each boundary into a time series with le="...".
+
+For le="100000", we have a count of 1.
+
+For le="+Inf", we also have 1 (cumulative total).
+
+_sum = 59.990422, the sum of all observed values.
+
+_count = 1, the total number of values in this histogram.
+
+Labels
+
+We flatten all resource-level attributes (cloud.account.id, etc.) and dimension (VolumeId) into Prometheus labels.
+
+In Prometheus, label names typically use underscores and lowercase. (You can rename them if you prefer strictly valid Prometheus naming, e.g. cloud_account_id, cloud_region, etc.)
+
+Two Buckets
+
+Because explicitBounds=[100000], we effectively have 2 ranges: “up to 100000” and “above 100000.”
+
+If your value is 59.990422, it increments both “≤ 100000” and “≤ +Inf” buckets by 1.
+
+In a real scenario with multiple measurements or more finely-grained buckets, you’d have more le="..." entries (e.g. le="10", le="50", le="100", etc.).
