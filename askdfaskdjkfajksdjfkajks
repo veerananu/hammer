@@ -1,0 +1,203 @@
+{
+  "resourceMetrics": [
+    {
+      "resource": {
+        "attributes": []
+      },
+      "scopeMetrics": [
+        {
+          "scope": {
+            "name": "example"
+          },
+          "metrics": [
+            {
+              "name": "my.histogram.metric",
+              "unit": "1",
+              "histogram": {
+                "aggregationTemporality": 2,
+                "dataPoints": [
+                  {
+                    "startTimeUnixNano": "1672531200000000000",
+                    "timeUnixNano": "1672531200000000000",
+                    "count": 2,
+                    "sum": 80.0,
+                    "min": 22.0,
+                    "max": 58.0,
+                    "bucketCounts": [0, 0, 1, 0, 0, 1],
+                    "explicitBounds": [10, 20, 30, 40, 50]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+1) Overall Structure
+jsonc
+Copy
+{
+  "resourceMetrics": [
+    {
+      "resource": {
+        "attributes": [
+          // Info about the 'resource' (e.g. "service.name": "my.service")
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "scope": {
+            // Name/version/attributes of the library producing these metrics
+          },
+          "metrics": [
+            // A list of 4 different metric definitions
+          ]
+        }
+      ]
+    }
+  ]
+}
+resourceMetrics: Top-level list. Each entry ties a set of metrics to a specific environment or “resource.”
+
+Example: The resource says "service.name": "my.service" → meaning “all these metrics come from a service named my.service.”
+
+scopeMetrics: For that resource, there’s an “instrumentation scope.”
+
+Example: "name": "my.library" and "version": "1.0.0" → means “the library generating these metrics is my.library version 1.0.0.”
+
+metrics: Within that scope, here are all the actual metrics.
+
+In this snippet, there’s just one resource and one scope, but there are four metric definitions.
+
+2) The Four Metrics
+(A) Sum (Counter-Like)
+jsonc
+Copy
+{
+  "name": "my.counter",
+  "unit": "1",
+  "description": "I am a Counter",
+  "sum": {
+    "aggregationTemporality": 1,  // "cumulative"
+    "isMonotonic": true,         // only goes up
+    "dataPoints": [
+      {
+        "asDouble": 5,
+        "startTimeUnixNano": "1544712660300000000",
+        "timeUnixNano": "1544712660300000000",
+        "attributes": [
+          { "key": "my.counter.attr", "value": { "stringValue": "some value" } }
+        ]
+      }
+    ]
+  }
+}
+What is it? A metric that accumulates over time (like a “counter”).
+
+sum.isMonotonic = true means it only increments. If you see 5, then 10, then 15, that’s typical of a counter.
+
+Why use it? Good for counting how many times something happened (requests, errors, etc.).
+
+(B) Gauge
+jsonc
+Copy
+{
+  "name": "my.gauge",
+  "unit": "1",
+  "description": "I am a Gauge",
+  "gauge": {
+    "dataPoints": [
+      {
+        "asDouble": 10,
+        "timeUnixNano": "1544712660300000000",
+        "attributes": [
+          { "key": "my.gauge.attr", "value": { "stringValue": "some value" } }
+        ]
+      }
+    ]
+  }
+}
+What is it? A snapshot of something that can go up or down (like temperature, CPU usage, memory usage).
+
+asDouble = 10 means “right now, it’s 10.” Next time, it could be 12 or 7.
+
+(C) Histogram (Explicit Bounds)
+jsonc
+Copy
+{
+  "name": "my.histogram",
+  "unit": "1",
+  "description": "I am a Histogram",
+  "histogram": {
+    "aggregationTemporality": 1,
+    "dataPoints": [
+      {
+        "startTimeUnixNano": "1544712660300000000",
+        "timeUnixNano": "1544712660300000000",
+        "count": 2,
+        "sum": 2,
+        "bucketCounts": [1,1],
+        "explicitBounds": [1],
+        "min": 0,
+        "max": 2,
+        "attributes": [
+          { "key": "my.histogram.attr", "value": { "stringValue": "some value" } }
+        ]
+      }
+    ]
+  }
+}
+What is it? A distribution of multiple values across user-defined “buckets.” Here:
+
+explicitBounds: [1] means there are 2 buckets:
+
+up to 1
+
+above 1
+
+bucketCounts: [1, 1] means:
+
+1 value fell into the first bucket (≤ 1)
+
+1 value fell into the second bucket (> 1)
+
+Why use it? Good for capturing how values cluster (e.g., response times: 0-5ms, 5-10ms, 10-100ms).
+
+(D) Exponential Histogram
+jsonc
+Copy
+{
+  "name": "my.exponential.histogram",
+  "unit": "1",
+  "description": "I am an Exponential Histogram",
+  "exponentialHistogram": {
+    "aggregationTemporality": 1,
+    "dataPoints": [
+      {
+        "startTimeUnixNano": "1544712660300000000",
+        "timeUnixNano": "1544712660300000000",
+        "count": 3,
+        "sum": 10,
+        "scale": 0,
+        "zeroCount": 1,
+        "positive": { "offset": 1, "bucketCounts": [0,2] },
+        "min": 0,
+        "max": 5,
+        "zeroThreshold": 0,
+        "attributes": [
+          { "key": "my.exponential.histogram.attr", "value": { "stringValue": "some value" } }
+        ]
+      }
+    ]
+  }
+}
+What is it? Another way to store distributions, but with exponentially sized buckets instead of user-defined ones.
+
+scale = 0 means the buckets are fairly coarse. A bigger scale means more (narrower) buckets.
+
+zeroCount is how many values fell exactly at 0.
+
+positive.offset / bucketCounts define the rest of the distribution for positive values.
+
