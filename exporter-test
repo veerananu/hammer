@@ -1,0 +1,48 @@
+{
+  "resourceMetrics": [
+    {
+      "resource": {
+        "attributes": [
+          { "key": "account_id", "value": { "stringValue": "149576493833" } },
+          { "key": "region", "value": { "stringValue": "us-east-1" } },
+          { "key": "namespace", "value": { "stringValue": "AWS/LAMBDA" } }
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "scope": { "name": "custom.metrics", "version": "1.0" },
+          "metrics": [
+            {
+              "name": "VolumeIdleTime",
+              "description": "Idle time for the Lambda volume",
+              "unit": "Seconds",
+              "exponentialHistogram": {
+                "aggregationTemporality": 2,
+                "dataPoints": [
+                  {
+                    "startTimeUnixNano": "1736142780000000000",
+                    "timeUnixNano": "1736142780000000000",
+                    "count": 1,
+                    "sum": 59.990422,
+                    "scale": 1,
+                    "zeroCount": 0,
+                    "positive": {
+                      "offset": 10,
+                      "bucketCounts": [0, 1]
+                    },
+                    "min": 59.990422,
+                    "max": 59.990422,
+                    "zeroThreshold": 0,
+                    "attributes": [
+                      { "key": "VolumeId", "value": { "stringValue": "vol-0e1750ccd74c1399d" } }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
