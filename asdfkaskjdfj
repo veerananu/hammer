@@ -1,0 +1,76 @@
+func sendBatch(ctx context.Context, batch []metrics.ResourceMetrics, cfg *config.Config) {
+	// Wrap the batch in the top-level "resourceMetrics" object.
+	requestData := metrics.ExportMetricsServiceRequest{
+		ResourceMetrics: batch,
+	}
+
+	// Marshal the complete payload as pretty JSON.
+	fullPayload, err := jsonLib.MarshalIndent(requestData, "", "  ")
+	if err != nil {
+		log.Printf("Error marshaling full OTEL payload: %v", err)
+	} else {
+		// This should print the payload with the "resourceMetrics" key.
+		log.Printf("Full OTEL Payload:\n%s", string(fullPayload))
+	}
+
+	// Also marshal compact version for sending.
+	jsonData, err := jsonLib.Marshal(requestData)
+	if err != nil {
+		log.Printf("Error marshaling JSON for sending: %v", err)
+		return
+	}
+
+	// If in local test mode, log the payload and exit.
+	if os.Getenv("LOCAL_TEST") == "true" {
+		log.Printf("LOCAL_TEST mode: Would send full payload:\n%s", string(fullPayload))
+		return
+	}
+
+	// Retry logic for sending the payload.
+	for attempt := 0; attempt <= cfg.MaxRetries; attempt++ {
+		select {
+		case <-ctx.Done():
+			log.Printf("Send cancelled: %v", ctx.Err())
+			return
+		default:
+		}
+
+		req, err := http.NewRequestWithContext(ctx, "POST", cfg.OTELEndpoint, bytes.NewBuffer(jsonData))
+		if err != nil {
+			log.Printf("Error creating request: %v", err)
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		log.Printf("Attempt %d to send full payload", attempt+1)
+		resp, err := client.Do(req)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			log.Printf("Successfully sent full payload with %d ResourceMetrics", len(batch))
+			if resp != nil {
+				resp.Body.Close()
+			}
+			return
+		}
+
+		if resp != nil {
+			body, _ := ioutil.ReadAll(resp.Body)
+			resp.Body.Close()
+			log.Printf("Attempt %d: received status %d. Response: %s", attempt+1, resp.StatusCode, string(body))
+		} else {
+			log.Printf("Attempt %d failed: %v", attempt+1, err)
+		}
+
+		if attempt < cfg.MaxRetries {
+			backoff := cfg.Backoff * time.Duration(math.Pow(cfg.BackoffMult, float64(attempt)))
+			log.Printf("Retrying in %v...", backoff)
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				log.Printf("Send cancelled during backoff: %v", ctx.Err())
+				return
+			}
+		} else {
+			log.Printf("Failed to send payload after %d attempts", cfg.MaxRetries+1)
+		}
+	}
+}
