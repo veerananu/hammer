@@ -1,0 +1,193 @@
+package sender
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io/ioutil"
+	"log"
+	"math"
+	"net/http"
+	"os"
+	"time"
+
+	"my-lambda-project/internal/config"
+	"my-lambda-project/internal/metrics"
+
+	jsoniter "github.com/json-iterator/go"
+)
+
+var jsonLib = jsoniter.ConfigCompatibleWithStandardLibrary
+
+// client is the HTTP client used to send requests.
+var client = &http.Client{
+	Timeout: 10 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 30,
+	},
+}
+
+// Sender collects ResourceMetrics from resultChan into batches and sends them via batchChan.
+// It returns a batchChan and a done channel that is closed when all batches have been flushed.
+func Sender(ctx context.Context, resultChan <-chan metrics.ResourceMetrics, cfg *config.Config, batchSize int, flushInterval time.Duration) (<-chan []metrics.ResourceMetrics, <-chan struct{}) {
+	batchChan := make(chan []metrics.ResourceMetrics, cfg.BatchChanSize)
+	done := make(chan struct{})
+
+	go func() {
+		batch := make([]metrics.ResourceMetrics, 0, batchSize)
+		timer := time.NewTimer(flushInterval)
+		defer func() {
+			if len(batch) > 0 {
+				batchChan <- batch
+			}
+			timer.Stop()
+			close(batchChan)
+			close(done)
+		}()
+
+		for {
+			select {
+			case rm, ok := <-resultChan:
+				if !ok {
+					return
+				}
+				// Log the metric as JSON if PRINT_JSON is enabled.
+				if cfg.PrintJSON {
+					// Wrap the single metric in ExportMetricsServiceRequest for correct top-level structure.
+					wrapped := metrics.ExportMetricsServiceRequest{
+						ResourceMetrics: []metrics.ResourceMetrics{rm},
+					}
+					jsonMetric, err := jsonLib.MarshalIndent(wrapped, "", "  ")
+					if err != nil {
+						log.Printf("Error marshaling metric: %v", err)
+					} else {
+						log.Printf("Sender received metric:\n%s", string(jsonMetric))
+					}
+				} else {
+					log.Printf("Sender received metric: %v", rm)
+				}
+				batch = append(batch, rm)
+				if len(batch) >= batchSize {
+					batchChan <- batch
+					batch = make([]metrics.ResourceMetrics, 0, batchSize)
+					if !timer.Stop() {
+						<-timer.C
+					}
+					timer.Reset(flushInterval)
+				}
+			case <-timer.C:
+				if len(batch) > 0 {
+					batchChan <- batch
+					batch = make([]metrics.ResourceMetrics, 0, batchSize)
+				}
+				timer.Reset(flushInterval)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	return batchChan, done
+}
+
+// StartWorkers launches worker goroutines that process batches from batchChan.
+func StartWorkers(ctx context.Context, batchChan <-chan []metrics.ResourceMetrics, cfg *config.Config, numWorkers int) {
+	for i := 0; i < numWorkers; i++ {
+		go worker(ctx, batchChan, cfg)
+	}
+}
+
+func worker(ctx context.Context, batchChan <-chan []metrics.ResourceMetrics, cfg *config.Config) {
+	for {
+		select {
+		case batch, ok := <-batchChan:
+			if !ok {
+				return
+			}
+			log.Printf("Worker: received batch of length %d", len(batch)) // Debug log.
+			sendBatch(ctx, batch, cfg)
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func sendBatch(ctx context.Context, batch []metrics.ResourceMetrics, cfg *config.Config) {
+	// Wrap the batch in the top-level "resourceMetrics" object.
+	requestData := metrics.ExportMetricsServiceRequest{
+		ResourceMetrics: batch,
+	}
+
+	// Marshal the complete payload as pretty JSON.
+	fullPayload, err := jsonLib.MarshalIndent(requestData, "", "  ")
+	if err != nil {
+		log.Printf("Error marshaling full OTEL payload: %v", err)
+	} else {
+		// Log the complete payload.
+		log.Printf("FULL OTEL PAYLOAD:\n%s", string(fullPayload))
+		fmt.Println("FULL OTEL PAYLOAD:")
+		fmt.Println(string(fullPayload))
+	}
+
+	// Marshal the compact payload for sending.
+	jsonData, err := jsonLib.Marshal(requestData)
+	if err != nil {
+		log.Printf("Error marshaling JSON for sending: %v", err)
+		return
+	}
+
+	// If LOCAL_TEST is enabled, print the full payload and exit without sending.
+	if os.Getenv("LOCAL_TEST") == "true" {
+		log.Printf("LOCAL_TEST mode: Would send full payload:\n%s", string(fullPayload))
+		return
+	}
+
+	// Sending with retry logic.
+	for attempt := 0; attempt <= cfg.MaxRetries; attempt++ {
+		select {
+		case <-ctx.Done():
+			log.Printf("Send cancelled: %v", ctx.Err())
+			return
+		default:
+		}
+
+		req, err := http.NewRequestWithContext(ctx, "POST", cfg.OTELEndpoint, bytes.NewBuffer(jsonData))
+		if err != nil {
+			log.Printf("Error creating request: %v", err)
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		log.Printf("Attempt %d to send full payload", attempt+1)
+		resp, err := client.Do(req)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			log.Printf("Successfully sent full payload with %d ResourceMetrics", len(batch))
+			if resp != nil {
+				resp.Body.Close()
+			}
+			return
+		}
+
+		if resp != nil {
+			body, _ := ioutil.ReadAll(resp.Body)
+			resp.Body.Close()
+			log.Printf("Attempt %d: received status %d. Response: %s", attempt+1, resp.StatusCode, string(body))
+		} else {
+			log.Printf("Attempt %d failed: %v", attempt+1, err)
+		}
+
+		if attempt < cfg.MaxRetries {
+			backoff := cfg.Backoff * time.Duration(math.Pow(cfg.BackoffMult, float64(attempt)))
+			log.Printf("Retrying in %v...", backoff)
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				log.Printf("Send cancelled during backoff: %v", ctx.Err())
+				return
+			}
+		} else {
+			log.Printf("Failed to send payload after %d attempts", cfg.MaxRetries+1)
+		}
+	}
+}
