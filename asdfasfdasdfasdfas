@@ -1,0 +1,191 @@
+package main
+
+import (
+	"os"
+	"testing"
+)
+
+func TestLocalTest(t *testing.T) {
+	// Set the environment to local test mode.
+	os.Setenv("LOCAL_TEST", "true")
+	// Set args so that main() calls localTest()
+	os.Args = []string{"myapp", "local"}
+
+	// Check that the expected test files exist.
+	if _, err := os.Stat("test/s3_event.json"); err != nil {
+		t.Skip("test/s3_event.json not found, skipping test")
+	}
+	if _, err := os.Stat("test/test_metrics.json"); err != nil {
+		t.Skip("test/test_metrics.json not found, skipping test")
+	}
+
+	// Calling main should run localTest() and process the test files.
+	main()
+}
+
+package config_test
+
+import (
+	"os"
+	"testing"
+
+	"my-lambda-project/internal/config"
+)
+
+func TestLoadDefaults(t *testing.T) {
+	// Clear environment variables to use default values.
+	os.Clearenv()
+	cfg := config.Load()
+
+	if cfg.NumWorkers != config.DefaultNumWorkers {
+		t.Errorf("Expected NumWorkers to be %d, got %d", config.DefaultNumWorkers, cfg.NumWorkers)
+	}
+	if cfg.BatchSize != config.DefaultBatchSize {
+		t.Errorf("Expected BatchSize to be %d, got %d", config.DefaultBatchSize, cfg.BatchSize)
+	}
+	if cfg.OTELEndpoint != config.DefaultOTELEndpoint {
+		t.Errorf("Expected OTELEndpoint to be %s, got %s", config.DefaultOTELEndpoint, cfg.OTELEndpoint)
+	}
+	if cfg.ResultChanSize != config.DefaultResultChanSize {
+		t.Errorf("Expected ResultChanSize to be %d, got %d", config.DefaultResultChanSize, cfg.ResultChanSize)
+	}
+	if cfg.BatchChanSize != config.DefaultBatchChanSize {
+		t.Errorf("Expected BatchChanSize to be %d, got %d", config.DefaultBatchChanSize, cfg.BatchChanSize)
+	}
+}
+
+package metrics_test
+
+import (
+	"context"
+	"os"
+	"testing"
+
+	"my-lambda-project/internal/metrics"
+)
+
+func TestConvertToOTEL(t *testing.T) {
+	// Disable sorting to have a deterministic order.
+	os.Setenv("ENABLE_SORTING", "false")
+
+	input := metrics.InputMetric{
+		MetricStreamName: "test_stream",
+		AccountID:        "acc123",
+		Region:           "us-east-1",
+		Namespace:        "TestNamespace",
+		MetricName:       "Latency",
+		Dimensions:       map[string]string{"env": "test"},
+		Timestamp:        1620000000,
+		Value: struct {
+			Max   float64 `json:"max"`
+			Min   float64 `json:"min"`
+			Sum   float64 `json:"sum"`
+			Count float64 `json:"count"`
+		}{Max: 200, Min: 100, Sum: 300, Count: 2},
+		Unit: "ms",
+	}
+
+	inputs := []metrics.InputMetric{input}
+	resultChan := make(chan metrics.ResourceMetrics, 1)
+	ctx := context.Background()
+	go metrics.ConvertToOTEL(ctx, inputs, resultChan)
+
+	var results []metrics.ResourceMetrics
+	for rm := range resultChan {
+		results = append(results, rm)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("Expected 1 ResourceMetrics, got %d", len(results))
+	}
+
+	if len(results[0].ScopeMetrics) == 0 {
+		t.Fatal("Expected at least one ScopeMetrics")
+	}
+
+	metricsArr := results[0].ScopeMetrics[0].Metrics
+	if len(metricsArr) != 4 {
+		t.Fatalf("Expected 4 metrics in ScopeMetrics, got %d", len(metricsArr))
+	}
+
+	expectedMetricName := "Latency_max_ms"
+	if metricsArr[0].Name != expectedMetricName {
+		t.Errorf("Expected first metric name %s, got %s", expectedMetricName, metricsArr[0].Name)
+	}
+}
+
+package s3_test
+
+import (
+	"os"
+	"testing"
+
+	"my-lambda-project/internal/s3"
+)
+
+func TestGetClient(t *testing.T) {
+	os.Setenv("AWS_REGION", "us-east-1")
+	client, err := s3.GetClient()
+	if err != nil {
+		t.Fatalf("GetClient returned error: %v", err)
+	}
+	if client == nil {
+		t.Fatal("Expected non-nil S3 client")
+	}
+}
+
+// Integration test for UpdateObjectStatus can be skipped in unit tests.
+func TestUpdateObjectStatus(t *testing.T) {
+	t.Skip("Skipping UpdateObjectStatus integration test")
+}
+
+package sender_test
+
+import (
+	"context"
+	"os"
+	"testing"
+	"time"
+
+	"my-lambda-project/internal/config"
+	"my-lambda-project/internal/metrics"
+	"my-lambda-project/internal/sender"
+)
+
+func TestSenderLocalTestMode(t *testing.T) {
+	os.Setenv("LOCAL_TEST", "true")
+	cfg := config.Load()
+	resultChan := make(chan metrics.ResourceMetrics, 1)
+
+	dummyResourceMetrics := metrics.ResourceMetrics{
+		Resource: metrics.Resource{
+			Attributes: []metrics.Attribute{
+				{Key: "testKey", Value: metrics.AttributeValue{StringValue: "testValue"}},
+			},
+		},
+		ScopeMetrics: []metrics.ScopeMetrics{
+			{
+				Scope:   struct{}{},
+				Metrics: []metrics.Metric{{Name: "dummy_metric", Unit: "unit", Gauge: metrics.Gauge{DataPoints: []metrics.DataPoint{}}}},
+			},
+		},
+	}
+
+	go func() {
+		resultChan <- dummyResourceMetrics
+		close(resultChan)
+	}()
+
+	batchChan, done := sender.Sender(context.Background(), resultChan, cfg, 1, 1*time.Second)
+	batchCount := 0
+	for batch := range batchChan {
+		if len(batch) != 1 {
+			t.Errorf("Expected batch length 1, got %d", len(batch))
+		}
+		batchCount++
+	}
+	if batchCount == 0 {
+		t.Error("Expected at least one batch")
+	}
+	<-done
+}
