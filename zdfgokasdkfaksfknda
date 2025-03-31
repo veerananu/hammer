@@ -1,0 +1,76 @@
+func sendBatch(ctx context.Context, batch []metrics.ResourceMetrics, cfg *config.Config) {
+	log.Printf("sendBatch called, batch length=%d", len(batch))
+	
+	// Create the complete OTEL payload wrapped with "resourceMetrics"
+	requestData := metrics.ExportMetricsServiceRequest{ResourceMetrics: batch}
+	
+	// Marshal the full payload as pretty JSON to ensure it prints with the "resourceMetrics" key.
+	fullPayload, err := jsonLib.MarshalIndent(requestData, "", "  ")
+	if err != nil {
+		log.Printf("Error marshaling full OTEL payload: %v", err)
+	} else {
+		log.Printf("Full OTEL Payload:\n%s", string(fullPayload))
+	}
+	
+	// Marshal the payload (without pretty printing) for sending.
+	jsonData, err := jsonLib.Marshal(requestData)
+	if err != nil {
+		log.Printf("Error marshaling JSON for sending: %v", err)
+		return
+	}
+	
+	// If in local test mode, log the payload and skip sending.
+	if os.Getenv("LOCAL_TEST") == "true" {
+		log.Printf("Local test: Would send full OTEL payload:\n%s", string(fullPayload))
+		log.Printf("Local test: Would send batch of %d ResourceMetrics", len(batch))
+		return
+	}
+	
+	// Retry logic to send the payload.
+	for attempt := 0; attempt <= cfg.MaxRetries; attempt++ {
+		select {
+		case <-ctx.Done():
+			log.Printf("Send cancelled: %v", ctx.Err())
+			return
+		default:
+		}
+		
+		req, err := http.NewRequestWithContext(ctx, "POST", cfg.OTELEndpoint, bytes.NewBuffer(jsonData))
+		if err != nil {
+			log.Printf("Error creating request: %v", err)
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		
+		log.Printf("Attempt %d to send full payload", attempt+1)
+		resp, err := client.Do(req)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			log.Printf("Successfully sent full payload of %d ResourceMetrics", len(batch))
+			if resp != nil {
+				resp.Body.Close()
+			}
+			return
+		}
+		
+		if resp != nil {
+			body, _ := ioutil.ReadAll(resp.Body)
+			resp.Body.Close()
+			log.Printf("Attempt %d: received status %d. Response: %s", attempt+1, resp.StatusCode, string(body))
+		} else {
+			log.Printf("Attempt %d failed: %v", attempt+1, err)
+		}
+		
+		if attempt < cfg.MaxRetries {
+			backoff := cfg.Backoff * time.Duration(math.Pow(cfg.BackoffMult, float64(attempt)))
+			log.Printf("Retrying in %v...", backoff)
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				log.Printf("Send cancelled during backoff: %v", ctx.Err())
+				return
+			}
+		} else {
+			log.Printf("Failed to send batch after %d attempts", cfg.MaxRetries+1)
+		}
+	}
+}
