@@ -1,0 +1,231 @@
+package metrics
+
+import (
+	"context"
+	"os"
+	"runtime"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+)
+
+var (
+	metricSuffixes = [4]string{"_max", "_min", "_sum", "_count"}
+	// unitValues: the first three will be set to input.Unit, the last is fixed ("1") but will be omitted for count.
+	unitValues = [4]string{"", "", "", "1"}
+)
+
+// AttributePool manages a pool of attribute slices to reduce allocations.
+type AttributePool struct {
+	pool sync.Pool
+}
+
+// NewAttributePool creates a new pool for attribute slices.
+func NewAttributePool() *AttributePool {
+	return &AttributePool{
+		pool: sync.Pool{
+			New: func() interface{} {
+				return make([]Attribute, 0, 10)
+			},
+		},
+	}
+}
+
+// Get returns an empty slice from the pool.
+func (p *AttributePool) Get() []Attribute {
+	return p.pool.Get().([]Attribute)[:0]
+}
+
+// Put returns the slice back to the pool.
+func (p *AttributePool) Put(attrs []Attribute) {
+	p.pool.Put(attrs)
+}
+
+var attributePool = NewAttributePool()
+
+// ConvertToOTEL converts a list of InputMetric to ResourceMetrics and sends them to the provided channel.
+func ConvertToOTEL(ctx context.Context, inputs []InputMetric, resultChan chan<- ResourceMetrics) {
+	if len(inputs) == 0 {
+		close(resultChan)
+		return
+	}
+
+	// --- Optional Sorting Block ---
+	// Controlled via the ENABLE_SORTING environment variable.
+	// If enabled, sorts the inputs by AccountID, then Region, then Namespace.
+	if sortEnabled, _ := strconv.ParseBool(os.Getenv("ENABLE_SORTING")); sortEnabled {
+		sort.Slice(inputs, func(i, j int) bool {
+			if inputs[i].AccountID != inputs[j].AccountID {
+				return inputs[i].AccountID < inputs[j].AccountID
+			}
+			if inputs[i].Region != inputs[j].Region {
+				return inputs[i].Region < inputs[j].Region
+			}
+			return inputs[i].Namespace < inputs[j].Namespace
+		})
+	}
+	// ----------------------------------
+
+	// Determine the maximum number of conversion workers.
+	W := runtime.NumCPU()
+	if maxConvStr := os.Getenv("MAX_CONVERSION_WORKERS"); maxConvStr != "" {
+		if max, err := strconv.Atoi(maxConvStr); err == nil && max > 0 && W > max {
+			W = max
+		}
+	}
+	if W < 1 {
+		W = 1
+	}
+
+	// Adjust the number of workers based on the input size.
+	minBatchSize := 10
+	if len(inputs) < minBatchSize*W {
+		if len(inputs) < minBatchSize {
+			W = 1
+		} else {
+			W = len(inputs) / minBatchSize
+		}
+	}
+
+	chunkSize := (len(inputs) + W - 1) / W
+	var wg sync.WaitGroup
+
+	// Launch worker goroutines for concurrent conversion.
+	for i := 0; i < W; i++ {
+		start := i * chunkSize
+		end := start + chunkSize
+		if end > len(inputs) {
+			end = len(inputs)
+		}
+		if start >= end {
+			break
+		}
+
+		wg.Add(1)
+		go func(start, end int) {
+			defer wg.Done()
+			for j := start; j < end; j++ {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					// Convert each InputMetric to ResourceMetrics.
+					rm := processInputToResourceMetrics(inputs[j])
+					select {
+					case resultChan <- rm:
+					case <-ctx.Done():
+						return
+					}
+				}
+			}
+		}(start, end)
+	}
+
+	// Close the result channel once all workers are done.
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+}
+
+// processInputToResourceMetrics converts a single InputMetric to ResourceMetrics.
+func processInputToResourceMetrics(input InputMetric) ResourceMetrics {
+	// Build dimension attribute keys from input dimensions.
+	dimensionKeys := make([]string, 0, len(input.Dimensions))
+	for k := range input.Dimensions {
+		dimensionKeys = append(dimensionKeys, k)
+	}
+	sort.Strings(dimensionKeys)
+
+	// Retrieve a slice from the attribute pool.
+	dimensionAttributes := attributePool.Get()
+	// Ensure that the slice is reset before being returned to the pool.
+	defer func() {
+		attributePool.Put(dimensionAttributes[:0])
+	}()
+
+	// Populate the slice with dimension attributes.
+	for _, k := range dimensionKeys {
+		dimensionAttributes = append(dimensionAttributes, Attribute{
+			Key: k,
+			Value: AttributeValue{
+				StringValue: input.Dimensions[k],
+			},
+		})
+	}
+
+	// Make a copy of the dimension attributes to use in the merged labels.
+	dimsCopy := make([]Attribute, len(dimensionAttributes))
+	copy(dimsCopy, dimensionAttributes)
+
+	// Create resource labels from input fields.
+	resourceLabels := []Attribute{
+		{Key: "cloud.account.id", Value: AttributeValue{StringValue: input.AccountID}},
+		{Key: "cloud.region", Value: AttributeValue{StringValue: input.Region}},
+		{Key: "cloud.namespace", Value: AttributeValue{StringValue: input.Namespace}},
+		{Key: "metric_stream_name", Value: AttributeValue{StringValue: input.MetricStreamName}},
+	}
+
+	// Merge the dimension attributes with the resource labels.
+	mergedLabels := append(dimsCopy, resourceLabels...)
+
+	// Convert the timestamp to a string in nanoseconds.
+	timeNano := strconv.FormatInt(input.Timestamp*1_000_000, 10)
+
+	// Prepare unit values for the metrics.
+	localUnits := unitValues
+	localUnits[0] = input.Unit
+	localUnits[1] = input.Unit
+	localUnits[2] = input.Unit
+	// Note: localUnits[3] is "1" by default, but we'll omit it for count.
+
+	// Determine a metric name prefix if the namespace starts with "AWS/".
+	prefix := ""
+	if strings.HasPrefix(input.Namespace, "AWS/") {
+		// For example, "AWS/EC2" becomes "ec2_".
+		prefix = strings.ToLower(input.Namespace[4:]) + "_"
+	}
+
+	// Extract metric values.
+	values := [4]float64{input.Value.Max, input.Value.Min, input.Value.Sum, input.Value.Count}
+	metricsArr := make([]Metric, 4)
+	for i := 0; i < 4; i++ {
+		var metricName string
+		var unit string
+		if i == 3 {
+			// For the count metric, add the suffix but omit the unit.
+			metricName = prefix + input.MetricName + metricSuffixes[i]
+			unit = ""
+		} else {
+			unit = localUnits[i]
+			metricName = prefix + input.MetricName + metricSuffixes[i] + "_" + unit
+		}
+		metricsArr[i] = Metric{
+			Name: metricName,
+			Unit: unit,
+			Gauge: Gauge{
+				DataPoints: []DataPoint{
+					{
+						Attributes:   mergedLabels,
+						TimeUnixNano: timeNano,
+						AsDouble:     values[i],
+					},
+				},
+			},
+		}
+	}
+
+	// Return the ResourceMetrics.
+	return ResourceMetrics{
+		Resource: Resource{
+			Attributes: []Attribute{},
+		},
+		ScopeMetrics: []ScopeMetrics{
+			{
+				Scope:   struct{}{},
+				Metrics: metricsArr,
+			},
+		},
+	}
+}
