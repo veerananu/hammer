@@ -1,0 +1,807 @@
+package main
+
+import (
+	"context"
+	"io/ioutil"
+	"log"
+	"my-lambda-project/internal/config"
+	"my-lambda-project/internal/metrics"
+	"my-lambda-project/internal/s3" // internal package
+	"my-lambda-project/internal/sender"
+	"os"
+	"time"
+
+	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-lambda-go/lambda"
+	jsoniter "github.com/json-iterator/go"
+
+	// AWS SDK s3 package
+	awsS3 "github.com/aws/aws-sdk-go/service/s3" // AWS SDK's S3 package
+)
+
+var jsonLib = jsoniter.ConfigCompatibleWithStandardLibrary
+var s3FailureCount int
+
+func handler(ctx context.Context, s3Event events.S3Event) error {
+	cfg := config.Load()
+
+	for _, record := range s3Event.Records {
+		var inputData []byte
+		var err error
+		var bucket, key string
+
+		if os.Getenv("LOCAL_TEST") == "true" {
+			localFilePath := "test/test_metrics.json"
+			inputData, err = os.ReadFile(localFilePath)
+			if err != nil {
+				log.Printf("Failed to read local file %s: %v", localFilePath, err)
+				continue
+			}
+		} else {
+			s3Client, err := s3.GetClient()
+			if err != nil {
+				log.Printf("Failed to initialize S3 client: %v", err)
+				return err
+			}
+			bucket = record.S3.Bucket.Name
+			key = record.S3.Object.Key
+			resp, err := s3Client.GetObjectWithContext(ctx, &awsS3.GetObjectInput{
+				Bucket: &bucket,
+				Key:    &key,
+			})
+			if err != nil {
+				log.Printf("Failed to get object %s from bucket %s: %v", key, bucket, err)
+				s3FailureCount++
+				continue
+			}
+			defer resp.Body.Close()
+			inputData, err = ioutil.ReadAll(resp.Body)
+			if err != nil {
+				log.Printf("Failed to read object %s: %v", key, err)
+				s3FailureCount++
+				continue
+			}
+		}
+
+		var inputs []metrics.InputMetric
+		if err := jsonLib.Unmarshal(inputData, &inputs); err != nil {
+			log.Printf("Error parsing JSON: %v", err)
+			continue
+		}
+
+		resultChan := make(chan metrics.ResourceMetrics, cfg.ResultChanSize)
+		flushInterval := 10 * time.Second
+
+		batchChan, done := sender.Sender(ctx, resultChan, cfg, cfg.BatchSize, flushInterval)
+		sender.StartWorkers(ctx, batchChan, cfg, cfg.NumWorkers)
+
+		startTime := time.Now()
+		metrics.ConvertToOTEL(ctx, inputs, resultChan)
+		log.Printf("Processed %d metrics. Time taken: %v. Failed S3 records: %d", len(inputs), time.Since(startTime), s3FailureCount)
+
+		<-done
+
+		if os.Getenv("LOCAL_TEST") == "true" {
+			log.Printf("Local test mode: would update S3 object (bucket: %s, key: %s) as processed", bucket, key)
+		} else {
+			s3Client, err := s3.GetClient()
+			if err != nil {
+				log.Printf("Failed to reinitialize S3 client for update: %v", err)
+			} else {
+				err = s3.UpdateObjectStatus(s3Client, bucket, key)
+				if err != nil {
+					log.Printf("Error updating object status for %s/%s: %v", bucket, key, err)
+				} else {
+					log.Printf("Successfully updated object status for %s/%s", bucket, key)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func localTest() {
+	eventData, err := os.ReadFile("test/s3_event.json")
+	if err != nil {
+		log.Fatalf("Failed to read event file: %v", err)
+	}
+	log.Printf("S3 event file content:\n%s", eventData)
+
+	var s3Event events.S3Event
+	if err := jsonLib.Unmarshal(eventData, &s3Event); err != nil {
+		log.Fatalf("Failed to unmarshal event: %v", err)
+	}
+
+	metricsData, err := os.ReadFile("test/test_metrics.json")
+	if err != nil {
+		log.Fatalf("Failed to read metrics file: %v", err)
+	}
+	log.Printf("Metrics file content:\n%s", metricsData)
+
+	os.Setenv("LOCAL_TEST", "true")
+	if len(os.Args) > 2 && os.Args[2] == "printjson" {
+		os.Setenv("PRINT_JSON", "true")
+		log.Printf("PRINT_JSON set to %s", os.Getenv("PRINT_JSON"))
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	if err := handler(ctx, s3Event); err != nil {
+		log.Printf("Handler error: %v", err)
+	} else {
+		log.Println("Handler executed successfully")
+	}
+}
+
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "local" {
+		localTest()
+	} else {
+		lambda.Start(handler)
+	}
+}
+------
+
+package config
+
+import (
+	"os"
+	"strconv"
+	"time"
+)
+
+const (
+	// Default values
+	DefaultNumWorkers     = 20
+	DefaultBatchSize      = 500
+	DefaultMaxRetries     = 3
+	DefaultBackoff        = 1 * time.Second
+	DefaultBackoffMult    = 2.0
+	DefaultOTELEndpoint   = "http://167.71.85.187:4318/v1/metrics"
+	DefaultResultChanSize = 1000
+	DefaultBatchChanSize  = 50
+)
+
+// Config holds application configuration loaded from environment variables.
+type Config struct {
+	PrintJSON      bool
+	NumWorkers     int
+	BatchSize      int
+	OTELEndpoint   string
+	ResultChanSize int
+	BatchChanSize  int
+	MaxRetries     int
+	Backoff        time.Duration
+	BackoffMult    float64
+}
+
+// Load reads environment variables and returns a Config instance.
+func Load() *Config {
+	cfg := &Config{}
+
+	// PRINT_JSON
+	cfg.PrintJSON, _ = strconv.ParseBool(os.Getenv("PRINT_JSON"))
+
+	// NUM_WORKERS
+	if n, err := strconv.Atoi(os.Getenv("NUM_WORKERS")); err == nil && n > 0 {
+		cfg.NumWorkers = n
+	} else {
+		cfg.NumWorkers = DefaultNumWorkers
+	}
+
+	// BATCH_SIZE
+	if b, err := strconv.Atoi(os.Getenv("BATCH_SIZE")); err == nil && b > 0 {
+		cfg.BatchSize = b
+	} else {
+		cfg.BatchSize = DefaultBatchSize
+	}
+
+	// OTEL_ENDPOINT
+	if endpoint := os.Getenv("OTEL_ENDPOINT"); endpoint != "" {
+		cfg.OTELEndpoint = endpoint
+	} else {
+		cfg.OTELEndpoint = DefaultOTELEndpoint
+	}
+
+	// RESULT_CHAN_SIZE
+	if rcs, err := strconv.Atoi(os.Getenv("RESULT_CHAN_SIZE")); err == nil && rcs > 0 {
+		cfg.ResultChanSize = rcs
+	} else {
+		cfg.ResultChanSize = DefaultResultChanSize
+	}
+
+	// BATCH_CHAN_SIZE
+	if bcs, err := strconv.Atoi(os.Getenv("BATCH_CHAN_SIZE")); err == nil && bcs > 0 {
+		cfg.BatchChanSize = bcs
+	} else {
+		cfg.BatchChanSize = DefaultBatchChanSize
+	}
+
+	cfg.MaxRetries = DefaultMaxRetries
+	cfg.Backoff = DefaultBackoff
+	cfg.BackoffMult = DefaultBackoffMult
+
+	return cfg
+}
+----------
+package metrics
+
+import (
+	"context"
+	"os"
+	"runtime"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+)
+
+var (
+	metricSuffixes = [4]string{"_max", "_min", "_sum", "_count"}
+	// unitValues: the first three will be set to input.Unit, the last is fixed ("1").
+	unitValues = [4]string{"", "", "", "1"}
+)
+
+// AttributePool manages a pool of attribute slices to reduce allocations.
+type AttributePool struct {
+	pool sync.Pool
+}
+
+// NewAttributePool creates a new pool for attribute slices.
+func NewAttributePool() *AttributePool {
+	return &AttributePool{
+		pool: sync.Pool{
+			New: func() interface{} {
+				return make([]Attribute, 0, 10)
+			},
+		},
+	}
+}
+
+// Get returns an empty slice from the pool.
+func (p *AttributePool) Get() []Attribute {
+	return p.pool.Get().([]Attribute)[:0]
+}
+
+// Put returns the slice back to the pool.
+func (p *AttributePool) Put(attrs []Attribute) {
+	p.pool.Put(attrs)
+}
+
+var attributePool = NewAttributePool()
+
+// ConvertToOTEL converts a list of InputMetric to ResourceMetrics and sends them to the provided channel.
+func ConvertToOTEL(ctx context.Context, inputs []InputMetric, resultChan chan<- ResourceMetrics) {
+	if len(inputs) == 0 {
+		close(resultChan)
+		return
+	}
+
+	// Optional sorting (controlled via ENABLE_SORTING environment variable).
+	if sortEnabled, _ := strconv.ParseBool(os.Getenv("ENABLE_SORTING")); sortEnabled {
+		sort.Slice(inputs, func(i, j int) bool {
+			if inputs[i].AccountID != inputs[j].AccountID {
+				return inputs[i].AccountID < inputs[j].AccountID
+			}
+			if inputs[i].Region != inputs[j].Region {
+				return inputs[i].Region < inputs[j].Region
+			}
+			return inputs[i].Namespace < inputs[j].Namespace
+		})
+	}
+
+	// Determine the maximum number of conversion workers.
+	W := runtime.NumCPU()
+	if maxConvStr := os.Getenv("MAX_CONVERSION_WORKERS"); maxConvStr != "" {
+		if max, err := strconv.Atoi(maxConvStr); err == nil && max > 0 && W > max {
+			W = max
+		}
+	}
+	if W < 1 {
+		W = 1
+	}
+
+	// Adjust the number of workers based on the input size.
+	minBatchSize := 10
+	if len(inputs) < minBatchSize*W {
+		if len(inputs) < minBatchSize {
+			W = 1
+		} else {
+			W = len(inputs) / minBatchSize
+		}
+	}
+
+	chunkSize := (len(inputs) + W - 1) / W
+	var wg sync.WaitGroup
+
+	for i := 0; i < W; i++ {
+		start := i * chunkSize
+		end := start + chunkSize
+		if end > len(inputs) {
+			end = len(inputs)
+		}
+		if start >= end {
+			break
+		}
+
+		wg.Add(1)
+		go func(start, end int) {
+			defer wg.Done()
+			for j := start; j < end; j++ {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					// Convert each InputMetric to ResourceMetrics.
+					rm := processInputToResourceMetrics(inputs[j])
+					select {
+					case resultChan <- rm:
+					case <-ctx.Done():
+						return
+					}
+				}
+			}
+		}(start, end)
+	}
+
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+}
+
+// processInputToResourceMetrics converts a single InputMetric to ResourceMetrics.
+func processInputToResourceMetrics(input InputMetric) ResourceMetrics {
+	// Build dimension attributes.
+	dimensionKeys := make([]string, 0, len(input.Dimensions))
+	for k := range input.Dimensions {
+		dimensionKeys = append(dimensionKeys, k)
+	}
+	sort.Strings(dimensionKeys)
+
+	dimensionAttributes := attributePool.Get()
+	defer attributePool.Put(dimensionAttributes)
+	for _, k := range dimensionKeys {
+		dimensionAttributes = append(dimensionAttributes, Attribute{
+			Key: k,
+			Value: AttributeValue{
+				StringValue: input.Dimensions[k],
+			},
+		})
+	}
+	dimsCopy := make([]Attribute, len(dimensionAttributes))
+	copy(dimsCopy, dimensionAttributes)
+
+	// Create resource labels.
+	resourceLabels := []Attribute{
+		{Key: "cloud.account.id", Value: AttributeValue{StringValue: input.AccountID}},
+		{Key: "cloud.region", Value: AttributeValue{StringValue: input.Region}},
+		{Key: "cloud.namespace", Value: AttributeValue{StringValue: input.Namespace}},
+		{Key: "metric_stream_name", Value: AttributeValue{StringValue: input.MetricStreamName}},
+	}
+
+	// Merge dimension attributes with resource labels.
+	mergedLabels := append(dimsCopy, resourceLabels...)
+
+	timeNano := strconv.FormatInt(input.Timestamp*1_000_000, 10)
+	localUnits := unitValues
+	localUnits[0] = input.Unit
+	localUnits[1] = input.Unit
+	localUnits[2] = input.Unit
+
+	// Determine prefix from cloud.namespace if it starts with "AWS/"
+	prefix := ""
+	if strings.HasPrefix(input.Namespace, "AWS/") {
+		// Get the substring after "AWS/" and append an underscore.
+		prefix = input.Namespace[4:] + "_"
+	}
+
+	values := [4]float64{input.Value.Max, input.Value.Min, input.Value.Sum, input.Value.Count}
+	metricsArr := make([]Metric, 4)
+	for i := 0; i < 4; i++ {
+		// For count metric (index 3), do not append the unit.
+		unitSuffix := ""
+		if i != 3 {
+			unitSuffix = "_" + localUnits[i]
+		}
+		metricsArr[i] = Metric{
+			// Construct metric name as: prefix + input.MetricName + suffix + (unitSuffix if not count).
+			Name: prefix + input.MetricName + metricSuffixes[i] + unitSuffix,
+			Unit: localUnits[i],
+			Gauge: Gauge{
+				DataPoints: []DataPoint{
+					{
+						Attributes:   mergedLabels,
+						TimeUnixNano: timeNano,
+						AsDouble:     values[i],
+					},
+				},
+			},
+		}
+	}
+
+	// Resource-level attributes left empty since all labels are merged into each data point.
+	return ResourceMetrics{
+		Resource: Resource{
+			Attributes: []Attribute{},
+		},
+		ScopeMetrics: []ScopeMetrics{
+			{
+				Scope:   struct{}{},
+				Metrics: metricsArr,
+			},
+		},
+	}
+}
+-----------------
+package metrics
+
+// InputMetric represents the input JSON structure.
+type InputMetric struct {
+	MetricStreamName string            `json:"metric_stream_name"`
+	AccountID        string            `json:"account_id"`
+	Region           string            `json:"region"`
+	Namespace        string            `json:"namespace"`
+	MetricName       string            `json:"metric_name"`
+	Dimensions       map[string]string `json:"dimensions"`
+	Timestamp        int64             `json:"timestamp"`
+	Value            struct {
+		Max   float64 `json:"max"`
+		Min   float64 `json:"min"`
+		Sum   float64 `json:"sum"`
+		Count float64 `json:"count"`
+	} `json:"value"`
+	Unit string `json:"unit"`
+}
+
+// Attribute represents an OTEL attribute.
+type Attribute struct {
+	Key   string         `json:"key"`
+	Value AttributeValue `json:"value"`
+}
+
+// AttributeValue holds the value of an attribute.
+type AttributeValue struct {
+	StringValue string `json:"stringValue,omitempty"`
+}
+
+// DataPoint represents a single data point in a metric.
+type DataPoint struct {
+	Attributes   []Attribute `json:"attributes"`
+	TimeUnixNano string      `json:"timeUnixNano"`
+	AsDouble     float64     `json:"asDouble"`
+}
+
+// Gauge represents a gauge metric type.
+type Gauge struct {
+	DataPoints []DataPoint `json:"dataPoints"`
+}
+
+// Metric defines an OTEL metric.
+type Metric struct {
+	Name  string `json:"name"`
+	Unit  string `json:"unit"`
+	Gauge Gauge  `json:"gauge"`
+}
+
+// ScopeMetrics groups metrics under a scope.
+type ScopeMetrics struct {
+	Scope   struct{} `json:"scope"`
+	Metrics []Metric `json:"metrics"`
+}
+
+// Resource defines resource-level attributes.
+type Resource struct {
+	Attributes []Attribute `json:"attributes"`
+}
+
+// ResourceMetrics combines resource and scope metrics.
+type ResourceMetrics struct {
+	Resource     Resource       `json:"resource"`
+	ScopeMetrics []ScopeMetrics `json:"scopeMetrics"`
+}
+
+// ExportMetricsServiceRequest defines the OTLP HTTP JSON structure.
+type ExportMetricsServiceRequest struct {
+	ResourceMetrics []ResourceMetrics `json:"resourceMetrics"`
+}
+----------
+
+package s3
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
+)
+
+// s3Client is the internal singleton for the S3 client.
+var s3Client *s3.S3
+
+// GetClient returns an initialized S3 client.
+// If the client is already initialized, it returns the cached instance.
+func GetClient() (*s3.S3, error) {
+	if s3Client != nil {
+		return s3Client, nil
+	}
+	sess, err := session.NewSession(&aws.Config{
+		Region: aws.String(os.Getenv("AWS_REGION")),
+	})
+	if err != nil {
+		return nil, err
+	}
+	s3Client = s3.New(sess)
+	return s3Client, nil
+}
+
+// UpdateObjectStatus updates the metadata of the same S3 object.
+// It first retrieves the current metadata, merges it with the new key-value pair ("Status": "Processed"),
+// and then performs a self‑copy with the merged metadata.
+func UpdateObjectStatus(s3Client *s3.S3, bucket, key string) error {
+	// Retrieve the current metadata using HeadObject.
+	headOutput, err := s3Client.HeadObject(&s3.HeadObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to retrieve current metadata: %w", err)
+	}
+
+	// Merge the new metadata with the existing metadata.
+	currentMetadata := headOutput.Metadata
+	if currentMetadata == nil {
+		currentMetadata = make(map[string]*string)
+	}
+	currentMetadata["Status"] = aws.String("Processed")
+
+	// Perform a self‑copy with the merged metadata.
+	_, err = s3Client.CopyObject(&s3.CopyObjectInput{
+		Bucket:            aws.String(bucket),
+		CopySource:        aws.String(fmt.Sprintf("%s/%s", bucket, key)),
+		Key:               aws.String(key),
+		MetadataDirective: aws.String("REPLACE"),
+		Metadata:          currentMetadata,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to update object metadata: %w", err)
+	}
+
+	// Optionally, wait until the updated object is available.
+	err = s3Client.WaitUntilObjectExists(&s3.HeadObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return fmt.Errorf("error waiting for object metadata update: %w", err)
+	}
+
+	return nil
+}
+-------------
+package sender
+
+import (
+	"bytes"
+	"context"
+	"io/ioutil"
+	"log"
+	"math"
+	"net/http"
+	"os"
+	"time"
+
+	"my-lambda-project/internal/config"
+	"my-lambda-project/internal/metrics"
+
+	jsoniter "github.com/json-iterator/go"
+)
+
+var jsonLib = jsoniter.ConfigCompatibleWithStandardLibrary
+
+// client is the HTTP client used to send requests.
+var client = &http.Client{
+	Timeout: 10 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 30,
+	},
+}
+
+// Sender collects ResourceMetrics from resultChan into batches and sends them via batchChan.
+// It returns a batchChan and a done channel that is closed when all batches have been flushed.
+func Sender(ctx context.Context, resultChan <-chan metrics.ResourceMetrics, cfg *config.Config, batchSize int, flushInterval time.Duration) (<-chan []metrics.ResourceMetrics, <-chan struct{}) {
+	batchChan := make(chan []metrics.ResourceMetrics, cfg.BatchChanSize)
+	done := make(chan struct{})
+
+	go func() {
+		batch := make([]metrics.ResourceMetrics, 0, batchSize)
+		timer := time.NewTimer(flushInterval)
+		defer func() {
+			if len(batch) > 0 {
+				batchChan <- batch
+			}
+			timer.Stop()
+			close(batchChan)
+			close(done)
+		}()
+
+		for {
+			select {
+			case rm, ok := <-resultChan:
+				if !ok {
+					return
+				}
+				// Log the metric as JSON if PRINT_JSON is enabled.
+				if cfg.PrintJSON {
+					jsonMetric, err := jsonLib.MarshalIndent(rm, "", "  ")
+					if err != nil {
+						log.Printf("Error marshaling metric: %v", err)
+					} else {
+						log.Printf("Sender received metric:\n%s", string(jsonMetric))
+					}
+				} else {
+					// log.Printf("Sender received metric: %v", rm)
+					log.Printf("Sender received metric: ")
+				}
+				batch = append(batch, rm)
+				if len(batch) >= batchSize {
+					batchChan <- batch
+					batch = make([]metrics.ResourceMetrics, 0, batchSize)
+					if !timer.Stop() {
+						<-timer.C
+					}
+					timer.Reset(flushInterval)
+				}
+			case <-timer.C:
+				if len(batch) > 0 {
+					batchChan <- batch
+					batch = make([]metrics.ResourceMetrics, 0, batchSize)
+				}
+				timer.Reset(flushInterval)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	return batchChan, done
+}
+
+// StartWorkers launches worker goroutines that process batches from batchChan.
+func StartWorkers(ctx context.Context, batchChan <-chan []metrics.ResourceMetrics, cfg *config.Config, numWorkers int) {
+	for i := 0; i < numWorkers; i++ {
+		go worker(ctx, batchChan, cfg)
+	}
+}
+
+func worker(ctx context.Context, batchChan <-chan []metrics.ResourceMetrics, cfg *config.Config) {
+	for {
+		select {
+		case batch, ok := <-batchChan:
+			if !ok {
+				return
+			}
+			log.Printf("Worker: received batch of length %d", len(batch)) // Debug log.
+			sendBatch(ctx, batch, cfg)
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func sendBatch(ctx context.Context, batch []metrics.ResourceMetrics, cfg *config.Config) {
+	log.Printf("sendBatch called, PRINT_JSON=%s, batch length=%d", os.Getenv("PRINT_JSON"), len(batch))
+	requestData := metrics.ExportMetricsServiceRequest{ResourceMetrics: batch}
+	jsonData, err := jsonLib.Marshal(requestData)
+	if err != nil {
+		log.Printf("Error marshaling JSON: %v", err)
+		return
+	}
+
+	// In local test mode, if PRINT_JSON is enabled, print the OTEL JSON payload.
+	if os.Getenv("LOCAL_TEST") == "true" {
+		if cfg.PrintJSON {
+			prettyJSON, err := jsonLib.MarshalIndent(requestData, "", "  ")
+			if err == nil {
+				log.Printf("Local test: OTEL payload:\n%s", string(prettyJSON))
+			} else {
+				log.Printf("Local test: Error creating pretty JSON: %v", err)
+			}
+		}
+		log.Printf("Local test: Would send batch of %d ResourceMetrics", len(batch))
+		return
+	}
+
+	if cfg.PrintJSON {
+		prettyJSON, err := jsonLib.MarshalIndent(requestData, "", "  ")
+		if err == nil {
+			log.Printf("Sending batch:\n%s", string(prettyJSON))
+		}
+	}
+
+	for attempt := 0; attempt <= cfg.MaxRetries; attempt++ {
+		select {
+		case <-ctx.Done():
+			log.Printf("Send cancelled: %v", ctx.Err())
+			return
+		default:
+		}
+
+		req, err := http.NewRequestWithContext(ctx, "POST", cfg.OTELEndpoint, bytes.NewBuffer(jsonData))
+		if err != nil {
+			log.Printf("Error creating request: %v", err)
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		log.Printf("Attempt %d to send batch of %d ResourceMetrics", attempt+1, len(batch))
+		resp, err := client.Do(req)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			log.Printf("Successfully sent batch of %d ResourceMetrics", len(batch))
+			if resp != nil {
+				resp.Body.Close()
+			}
+			return
+		}
+
+		if resp != nil {
+			body, _ := ioutil.ReadAll(resp.Body)
+			resp.Body.Close()
+			log.Printf("Attempt %d: received status %d. Response: %s", attempt+1, resp.StatusCode, string(body))
+		} else {
+			log.Printf("Attempt %d failed: %v", attempt+1, err)
+		}
+
+		if attempt < cfg.MaxRetries {
+			backoff := cfg.Backoff * time.Duration(math.Pow(cfg.BackoffMult, float64(attempt)))
+			log.Printf("Retrying in %v...", backoff)
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				log.Printf("Send cancelled during backoff: %v", ctx.Err())
+				return
+			}
+		} else {
+			log.Printf("Failed to send batch after %d attempts", cfg.MaxRetries+1)
+		}
+	}
+}
+----------
+{
+    "Records": [
+      {
+        "eventVersion": "2.1",
+        "eventSource": "aws:s3",
+        "awsRegion": "us-east-1",
+        "eventTime": "2023-03-28T12:34:56.000Z",
+        "eventName": "ObjectCreated:Put",
+        "s3": {
+          "s3SchemaVersion": "1.0",
+          "configurationId": "testConfigRule",
+          "bucket": {
+            "name": "my-test-bucket",
+            "ownerIdentity": {
+              "principalId": "EXAMPLE"
+            },
+            "arn": "arn:aws:s3:::my-test-bucket"
+          },
+          "object": {
+            "key": "test/test_metrics.json",
+            "size": 1024,
+            "eTag": "1234567890abcdef",
+            "sequencer": "0A1B2C3D4E5F678901"
+          }
+        }
+      }
+    ]
+  }
+  --------------
+[
+  {"metric_stream_name":"CustomFull-1Uh2uW","account_id":"149536493833","region":"us-east-1","namespace":"AWS/APIGATEWAY","metric_name":"VolumeIdleTime","dimensions":{"VolumeId":"vol-0e1750ccd74c1399d"},"timestamp":1736142780000,"value":{"max":59.990422,"min":59.990422,"sum":59.990422,"count":1.0},"unit":"Seconds"},
+  {"metric_stream_name":"CustomFull-1Uh2uW","account_id":"149536493833","region":"us-east-1","namespace":"AWS/LAMBDA","metric_name":"VolumeTotalWriteTime","dimensions":{"VolumeId":"vol-0e1750ccd74c1399d"},"timestamp":1736142780000,"value":{"max":0.050324,"min":0.050324,"sum":0.050324,"count":1.0},"unit":"Seconds"}
+  ]
+  
