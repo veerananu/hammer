@@ -1,0 +1,10 @@
+type Config struct {
+    OTELEndpoint string
+    APIKey       string
+    GlooEnv      string
+    BatchChanSize int
+    MaxRetries   int
+    Backoff      time.Duration
+    BackoffMult  float64
+    PrintJSON    bool
+}
