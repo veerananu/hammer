@@ -1,0 +1,92 @@
+package config
+
+import (
+	"os"
+	"strconv"
+	"testing"
+	"time"
+)
+
+func TestLoadDefaults(t *testing.T) {
+	// Clear any variables that might interfere.
+	os.Unsetenv("PRINT_JSON")
+	os.Unsetenv("NUM_WORKERS")
+	os.Unsetenv("BATCH_SIZE")
+	os.Unsetenv("OTEL_ENDPOINT")
+	os.Unsetenv("RESULT_CHAN_SIZE")
+	os.Unsetenv("BATCH_CHAN_SIZE")
+
+	cfg := Load()
+
+	if cfg.PrintJSON != false {
+		t.Errorf("Expected PrintJSON false, got %v", cfg.PrintJSON)
+	}
+	if cfg.NumWorkers != DefaultNumWorkers {
+		t.Errorf("Expected NumWorkers %d, got %d", DefaultNumWorkers, cfg.NumWorkers)
+	}
+	if cfg.BatchSize != DefaultBatchSize {
+		t.Errorf("Expected BatchSize %d, got %d", DefaultBatchSize, cfg.BatchSize)
+	}
+	if cfg.OTELEndpoint != DefaultOTELEndpoint {
+		t.Errorf("Expected OTELEndpoint %s, got %s", DefaultOTELEndpoint, cfg.OTELEndpoint)
+	}
+	if cfg.ResultChanSize != DefaultResultChanSize {
+		t.Errorf("Expected ResultChanSize %d, got %d", DefaultResultChanSize, cfg.ResultChanSize)
+	}
+	if cfg.BatchChanSize != DefaultBatchChanSize {
+		t.Errorf("Expected BatchChanSize %d, got %d", DefaultBatchChanSize, cfg.BatchChanSize)
+	}
+	if cfg.MaxRetries != DefaultMaxRetries {
+		t.Errorf("Expected MaxRetries %d, got %d", DefaultMaxRetries, cfg.MaxRetries)
+	}
+	if cfg.Backoff != DefaultBackoff {
+		t.Errorf("Expected Backoff %v, got %v", DefaultBackoff, cfg.Backoff)
+	}
+	if cfg.BackoffMult != DefaultBackoffMult {
+		t.Errorf("Expected BackoffMult %v, got %v", DefaultBackoffMult, cfg.BackoffMult)
+	}
+}
+
+func TestLoadCustomValues(t *testing.T) {
+	os.Setenv("PRINT_JSON", "true")
+	os.Setenv("NUM_WORKERS", "10")
+	os.Setenv("BATCH_SIZE", "200")
+	os.Setenv("OTEL_ENDPOINT", "http://localhost:8080/metrics")
+	os.Setenv("RESULT_CHAN_SIZE", "500")
+	os.Setenv("BATCH_CHAN_SIZE", "25")
+	defer func() {
+		// Clean up environment variables.
+		os.Unsetenv("PRINT_JSON")
+		os.Unsetenv("NUM_WORKERS")
+		os.Unsetenv("BATCH_SIZE")
+		os.Unsetenv("OTEL_ENDPOINT")
+		os.Unsetenv("RESULT_CHAN_SIZE")
+		os.Unsetenv("BATCH_CHAN_SIZE")
+	}()
+
+	cfg := Load()
+
+	// Validate custom values.
+	if cfg.PrintJSON != true {
+		t.Errorf("Expected PrintJSON true, got %v", cfg.PrintJSON)
+	}
+	numWorkers, _ := strconv.Atoi(os.Getenv("NUM_WORKERS"))
+	if cfg.NumWorkers != numWorkers {
+		t.Errorf("Expected NumWorkers %d, got %d", numWorkers, cfg.NumWorkers)
+	}
+	batchSize, _ := strconv.Atoi(os.Getenv("BATCH_SIZE"))
+	if cfg.BatchSize != batchSize {
+		t.Errorf("Expected BatchSize %d, got %d", batchSize, cfg.BatchSize)
+	}
+	if cfg.OTELEndpoint != "http://localhost:8080/metrics" {
+		t.Errorf("Expected OTELEndpoint http://localhost:8080/metrics, got %s", cfg.OTELEndpoint)
+	}
+	resultChanSize, _ := strconv.Atoi(os.Getenv("RESULT_CHAN_SIZE"))
+	if cfg.ResultChanSize != resultChanSize {
+		t.Errorf("Expected ResultChanSize %d, got %d", resultChanSize, cfg.ResultChanSize)
+	}
+	batchChanSize, _ := strconv.Atoi(os.Getenv("BATCH_CHAN_SIZE"))
+	if cfg.BatchChanSize != batchChanSize {
+		t.Errorf("Expected BatchChanSize %d, got %d", batchChanSize, cfg.BatchChanSize)
+	}
+}
