@@ -1,0 +1,171 @@
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"io/ioutil"
+	"log"
+	"my-lambda-project/internal/config"
+	"my-lambda-project/internal/metrics"
+	"my-lambda-project/internal/s3" // internal package
+	"my-lambda-project/internal/sender"
+	"os"
+	"time"
+
+	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-lambda-go/lambda"
+	jsoniter "github.com/json-iterator/go"
+
+	// AWS SDK s3 package
+	awsS3 "github.com/aws/aws-sdk-go/service/s3" // AWS SDK's S3 package
+)
+
+var jsonLib = jsoniter.ConfigCompatibleWithStandardLibrary
+var s3FailureCount int
+
+func handler(ctx context.Context, s3Event events.S3Event) error {
+	cfg := config.Load()
+
+	for _, record := range s3Event.Records {
+		var inputData []byte
+		var err error
+		var bucket, key string
+
+		if os.Getenv("LOCAL_TEST") == "true" {
+			localFilePath := "test/test_metrics.json"
+			inputData, err = os.ReadFile(localFilePath)
+			if err != nil {
+				log.Printf("Failed to read local file %s: %v", localFilePath, err)
+				continue
+			}
+		} else {
+			s3Client, err := s3.GetClient()
+			if err != nil {
+				log.Printf("Failed to initialize S3 client: %v", err)
+				return err
+			}
+			bucket = record.S3.Bucket.Name
+			key = record.S3.Object.Key
+			resp, err := s3Client.GetObjectWithContext(ctx, &awsS3.GetObjectInput{
+				Bucket: &bucket,
+				Key:    &key,
+			})
+			if err != nil {
+				log.Printf("Failed to get object %s from bucket %s: %v", key, bucket, err)
+				s3FailureCount++
+				continue
+			}
+			defer resp.Body.Close()
+			inputData, err = ioutil.ReadAll(resp.Body)
+			if err != nil {
+				log.Printf("Failed to read object %s: %v", key, err)
+				s3FailureCount++
+				continue
+			}
+		}
+
+		// --- Modified JSON Parsing ---
+		// Support both JSON array and newline-delimited JSON objects.
+		var inputs []metrics.InputMetric
+		trimmedData := bytes.TrimSpace(inputData)
+		if len(trimmedData) > 0 && trimmedData[0] == '[' {
+			// Input is a JSON array.
+			if err := jsonLib.Unmarshal(inputData, &inputs); err != nil {
+				log.Printf("Error parsing JSON array: %v", err)
+				continue
+			}
+		} else {
+			// Input is newline-delimited JSON (NDJSON).
+			scanner := bufio.NewScanner(bytes.NewReader(inputData))
+			for scanner.Scan() {
+				line := scanner.Bytes()
+				if len(bytes.TrimSpace(line)) == 0 {
+					continue
+				}
+				var metric metrics.InputMetric
+				if err := jsonLib.Unmarshal(line, &metric); err != nil {
+					log.Printf("Error parsing JSON object: %v", err)
+					continue
+				}
+				inputs = append(inputs, metric)
+			}
+			if err := scanner.Err(); err != nil {
+				log.Printf("Error reading metrics: %v", err)
+				continue
+			}
+		}
+		// --- End Modified JSON Parsing ---
+
+		resultChan := make(chan metrics.ResourceMetrics, cfg.ResultChanSize)
+		flushInterval := 10 * time.Second
+
+		batchChan, done := sender.Sender(ctx, resultChan, cfg, cfg.BatchSize, flushInterval)
+		sender.StartWorkers(ctx, batchChan, cfg, cfg.NumWorkers)
+
+		startTime := time.Now()
+		metrics.ConvertToOTEL(ctx, inputs, resultChan)
+		log.Printf("Processed %d metrics. Time taken: %v. Failed S3 records: %d", len(inputs), time.Since(startTime), s3FailureCount)
+
+		<-done
+
+		if os.Getenv("LOCAL_TEST") == "true" {
+			log.Printf("Local test mode: would update S3 object (bucket: %s, key: %s) as processed", bucket, key)
+		} else {
+			s3Client, err := s3.GetClient()
+			if err != nil {
+				log.Printf("Failed to reinitialize S3 client for update: %v", err)
+			} else {
+				err = s3.UpdateObjectStatus(s3Client, bucket, key)
+				if err != nil {
+					log.Printf("Error updating object status for %s/%s: %v", bucket, key, err)
+				} else {
+					log.Printf("Successfully updated object status for %s/%s", bucket, key)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func localTest() {
+	eventData, err := os.ReadFile("test/s3_event.json")
+	if err != nil {
+		log.Fatalf("Failed to read event file: %v", err)
+	}
+	log.Printf("S3 event file content:\n%s", eventData)
+
+	var s3Event events.S3Event
+	if err := jsonLib.Unmarshal(eventData, &s3Event); err != nil {
+		log.Fatalf("Failed to unmarshal event: %v", err)
+	}
+
+	metricsData, err := os.ReadFile("test/test_metrics.json")
+	if err != nil {
+		log.Fatalf("Failed to read metrics file: %v", err)
+	}
+	log.Printf("Metrics file content:\n%s", metricsData)
+
+	os.Setenv("LOCAL_TEST", "true")
+	if len(os.Args) > 2 && os.Args[2] == "printjson" {
+		os.Setenv("PRINT_JSON", "true")
+		log.Printf("PRINT_JSON set to %s", os.Getenv("PRINT_JSON"))
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	if err := handler(ctx, s3Event); err != nil {
+		log.Printf("Handler error: %v", err)
+	} else {
+		log.Println("Handler executed successfully")
+	}
+}
+
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "local" {
+		localTest()
+	} else {
+		lambda.Start(handler)
+	}
+}
