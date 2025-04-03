@@ -1,0 +1,21 @@
+Expected Outcome: To design an AWS architecture that enables near real-time streaming of metrics to the on-prem OpenTelemetry system.
+Actual Outcome: Successfully designed a solution to complement the current setup, addressing the ~10-minute delay by enabling near real-time metric access.
+Importance: Faster access to metrics is essential for timely monitoring, quicker issue detection, and improved operational efficiency.
+Supporting Metrics: Existing system has ~10-minute delay; the proposed design targets latency under 1 minute.
+Leadership & Behaviour: Took ownership of the design initiative, collaborating across teams and aligning with AAA standards and CC core behaviours such as innovation, accountability, and customer focus.
+
+
+
+
+
+Expected Outcome: Deploy an OpenTelemetry-based application in the OpenShift review environment to enable metric transformation and ingestion.
+Actual Outcome: Successfully deployed the application to receive AWS metrics, transform them from OTEL JSON to Prometheus format, and expose them for scraping.
+Importance: This enables seamless metric flow from AWS to on-prem, supporting observability and monitoring needs.
+Supporting Metrics: Metrics are scraped by vmagent (running as a sidecar) and stored in the CC VictoriaMetrics system with minimal delay.
+Leadership & Behaviour: Demonstrated ownership and collaboration by aligning with AAA standards and CC core behaviours, ensuring reliability, innovation, and continuous improvement in observability.
+
+Expected Outcome: Develop an AWS Lambda function in Go to convert human-readable NOD JSON metrics into OTEL JSON format.
+Actual Outcome: Successfully implemented the Lambda function in the dev environment, supporting four metric types—min, max, sum, and count.
+Importance: Enabled standardized metric processing for downstream observability tools, improving data consistency and monitoring capability.
+Supporting Metrics: Designed to process 5,000–6,000 metrics within 15 seconds.
+Leadership & Behaviour: Took initiative and applied problem-solving skills aligned with AAA standards and CC core behaviours such as innovation, accountability, and delivery focus.
