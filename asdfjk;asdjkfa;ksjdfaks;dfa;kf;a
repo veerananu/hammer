@@ -1,0 +1,83 @@
+// main_test.go
+package main
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/aws/aws-lambda-go/events"
+	"github.com/stretchr/testify/assert"
+)
+
+func TestHandler_LocalMode(t *testing.T) {
+	// Enable local mode so that the handler uses file I/O.
+	err := os.Setenv("LOCAL_TEST", "true")
+	assert.NoError(t, err)
+	defer os.Unsetenv("LOCAL_TEST")
+
+	// Provided JSON object.
+	jsonObject := `{"metric_stream_name":"CustomPartial-95tLsi","account_id":"084828565119","region":"us-east-1","namespace":"AWS/EBS","metric_name":"VolumeReadBytes","dimensions":{"VolumeId":"vol-0d98172038a3746c8"},"timestamp":1743621120000,"value":{"max":0.0,"min":0.0,"sum":0.0,"count":1.0},"unit":"Bytes"}`
+
+	// Define test cases: one for JSON array and one for NDJSON.
+	testCases := []struct {
+		name string
+		data []byte
+	}{
+		{
+			name: "JSON array",
+			data: []byte("[" + jsonObject + "]"),
+		},
+		{
+			name: "NDJSON",
+			data: []byte(jsonObject + "\n" + jsonObject),
+		},
+	}
+
+	// Create a temporary directory and switch the working directory to it.
+	tempDir := t.TempDir()
+	origWD, err := os.Getwd()
+	assert.NoError(t, err)
+	err = os.Chdir(tempDir)
+	assert.NoError(t, err)
+	// Restore the original working directory when the test ends.
+	defer func() {
+		_ = os.Chdir(origWD)
+	}()
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create the expected "test" directory inside the temp directory.
+			testDirPath := filepath.Join(tempDir, "test")
+			err := os.MkdirAll(testDirPath, 0755)
+			assert.NoError(t, err, "failed to create test directory")
+
+			// Write the in-memory JSON data to "test/test_metrics.json".
+			filePath := filepath.Join(testDirPath, "test_metrics.json")
+			err = os.WriteFile(filePath, tc.data, 0644)
+			assert.NoError(t, err, "failed to write test file")
+
+			// Create a dummy S3 event (its bucket/key values are not used in local mode).
+			s3Event := events.S3Event{
+				Records: []events.S3EventRecord{
+					{
+						S3: events.S3Entity{
+							Bucket: events.S3Bucket{Name: "dummy-bucket"},
+							Object: events.S3Object{Key: "dummy-key"},
+						},
+					},
+				},
+			}
+
+			// Create a context with a timeout.
+			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+			defer cancel()
+
+			// Call the handler; it should process the file without error.
+			err = handler(ctx, s3Event)
+			assert.NoError(t, err, "handler should not return an error")
+		})
+	}
+}
