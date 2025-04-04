@@ -1,0 +1,35 @@
+In conclusion, AWS CloudWatch Metric Streams require the Kinesis Firehose to be co-located in the same account and region because the feature was built with a strict account-boundary in mind. This is enforced by the IAM role requirements and the lack of cross-account hooks in the Metric Streams API​
+DOCS.AWS.AMAZON.COM
+. The reasons include service role limitations (the CloudWatch service can only assume roles and write to resources in its own account), and AWS’s internal service trust boundaries that isolate accounts for security. It is an intentional design constraint rather than a technical bug – likely chosen to ensure clarity of data ownership and to keep the streaming pipeline efficient and secure. To send metrics to another account, the official solution is to use an intermediate Firehose in the source account and configure its delivery to a cross-account destination like S3​
+DOCS.AWS.AMAZON.COM
+. This leverages Firehose’s capabilities to cross account boundaries in a controlled way, since S3 and Firehose support cross-account access via IAM policies. In practice, this workaround is necessary to achieve multi-account metric aggregation until AWS provides native support for cross-account Metric Stream targets (if ever). By citing AWS documentation and following these patterns, we confirm that the limitation is by design – a combination of service integration design and security considerations – and the local-Firehose-to-external-S3 pattern is the recommended approach to gather metrics centrally from multiple accounts.
+
+Short Answer:
+
+AWS designed CloudWatch Metric Streams so that it can only deliver data to a Firehose in the same AWS account and region.
+
+You cannot directly configure Metric Streams to use a Firehose owned by a different account.
+
+Because of that, if you want to move metrics across accounts, you must use a local Firehose in your source account, then set that Firehose to deliver to another account (e.g., by writing to an S3 bucket in the destination account).
+
+Why?
+
+Service Limitation:
+
+The Metric Streams service (via the AWS console/API) will reject any attempt to specify a Firehose ARN in a different account. Internally, AWS does not allow Metric Streams to call Firehose APIs across account boundaries—it only calls Firehose in the same account.
+
+IAM Service Roles:
+
+CloudWatch Metric Streams uses an IAM role in its own account to push data into Firehose. This role must trust the CloudWatch Metric Stream service, and the Firehose it talks to has to be in that same account. AWS doesn’t let Metric Streams assume a cross-account role to write to Firehose in another account.
+
+Security & Simplicity:
+
+By forcing the Metric Stream and Firehose to stay in the same account, AWS reduces complexity. There's no risk of accidentally sending your CloudWatch metrics to an untrusted external account if you haven't set up cross-account Firehose properly. They basically say, “You can’t do cross-account streaming directly—if you do want cross-account data transfer, you must deliberately configure that on the Firehose or S3 side.”
+
+Result:
+
+If you need to send your metrics from Account B to Account A, you first create a Metric Stream in B that writes to a Firehose in B.
+
+Then that Firehose (in B) can deliver data to a bucket or service in A. The Firehose in B supports cross-account delivery (like writing to an S3 bucket in A) as long as you set up the right IAM policies.
+
+This is why the “intermediate Firehose + S3” approach is necessary—because Metric Streams can’t do cross-account writes directly. Instead, you rely on Firehose’s built-in ability to deliver across accounts.
