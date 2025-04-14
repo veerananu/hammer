@@ -1,0 +1,150 @@
+package s3
+
+import (
+    "os"
+    "testing"
+
+    "github.com/aws/aws-sdk-go/aws"
+    "github.com/aws/aws-sdk-go/service/s3"
+    "github.com/stretchr/testify/assert"
+)
+
+// TestGetClient tests the GetClient function.
+func TestGetClient(t *testing.T) {
+    // Ensure AWS_REGION is set for the test
+    os.Setenv("AWS_REGION", "us-east-1")
+    defer os.Unsetenv("AWS_REGION")
+
+    client, err := GetClient()
+    assert.NoError(t, err, "GetClient should not return an error")
+    assert.NotNil(t, client, "Client should not be nil")
+    assert.Equal(t, "us-east-1", *client.Config.Region, "Region should match AWS_REGION")
+}
+
+// TestAddObjectTag tests the AddObjectTag function.
+func TestAddObjectTag(t *testing.T) {
+    // Ensure AWS_REGION is set
+    os.Setenv("AWS_REGION", "us-east-1")
+    defer os.Unsetenv("AWS_REGION")
+
+    // Initialize S3 client
+    client, err := GetClient()
+    assert.NoError(t, err, "GetClient should not return an error")
+
+    // Replace with a real bucket and object key that exist in your AWS account
+    bucket := "your-test-bucket"
+    key := "test-object.txt"
+
+    // Test adding a tag
+    err = AddObjectTag(client, bucket, key)
+    assert.NoError(t, err, "AddObjectTag should not return an error")
+
+    // Optionally, verify the tag was added
+    taggingOutput, err := client.GetObjectTagging(&s3.GetObjectTaggingInput{
+        Bucket: aws.String(bucket),
+        Key:    aws.String(key),
+    })
+    assert.NoError(t, err, "GetObjectTagging should not return an error")
+    assert.NotNil(t, taggingOutput.TagSet, "TagSet should not be nil")
+
+    // Check if the "Status=Processed" tag exists
+    tagFound := false
+    for _, tag := range taggingOutput.TagSet {
+        if *tag.Key == "Status" && *tag.Value == "Processed" {
+            tagFound = true
+            break
+        }
+    }
+    assert.True(t, tagFound, "Expected tag Status=Processed not found")
+}
+
+----
+
+package s3
+
+import (
+    "fmt"
+    "log"
+    "os"
+
+    "github.com/aws/aws-sdk-go/aws"
+    "github.com/aws/aws-sdk-go/aws/session"
+    "github.com/aws/aws-sdk-go/service/s3"
+)
+
+var s3Client *s3.S3
+
+// GetClient initializes and returns an S3 client.
+func GetClient() (*s3.S3, error) {
+    if s3Client != nil {
+        return s3Client, nil
+    }
+    region := os.Getenv("AWS_REGION")
+    if region == "" {
+        return nil, fmt.Errorf("AWS_REGION environment variable is not set")
+    }
+    log.Printf("Using AWS region: %s", region)
+    sess, err := session.NewSession(&aws.Config{
+        Region: aws.String(region),
+    })
+    if err != nil {
+        return nil, fmt.Errorf("failed to create session: %w", err)
+    }
+    s3Client = s3.New(sess)
+    return s3Client, nil
+}
+
+// AddObjectTag adds or updates a "Status=Processed" tag on an S3 object.
+func AddObjectTag(s3Client *s3.S3, bucket, key string) error {
+    log.Printf("Attempting to get tags for s3://%s/%s", bucket, key)
+    // Retrieve current tags (optional, to preserve them).
+    getTaggingOutput, err := s3Client.GetObjectTagging(&s3.GetObjectTaggingInput{
+        Bucket: aws.String(bucket),
+        Key:    aws.String(key),
+    })
+    var currentTags []*s3.Tag
+    if err != nil {
+        if err.Error() != "NoSuchTagSet" {
+            return fmt.Errorf("failed to retrieve object tags: %w", err)
+        }
+        log.Println("No existing tags found")
+    } else {
+        currentTags = getTaggingOutput.TagSet
+        log.Printf("Found %d existing tags", len(currentTags))
+    }
+
+    // Add or update the desired tag.
+    newTag := &s3.Tag{
+        Key:   aws.String("Status"),
+        Value: aws.String("Processed"),
+    }
+    updatedTags := currentTags
+    tagExists := false
+    for _, tag := range currentTags {
+        if *tag.Key == "Status" {
+            tag.Value = aws.String("Processed")
+            tagExists = true
+            log.Println("Updating existing Status tag to Processed")
+            break
+        }
+    }
+    if !tagExists {
+        updatedTags = append(updatedTags, newTag)
+        log.Println("Adding new Status=Processed tag")
+    }
+
+    // Set the updated tags on the object.
+    log.Printf("Applying tags to s3://%s/%s", bucket, key)
+    _, err = s3Client.PutObjectTagging(&s3.PutObjectTaggingInput{
+        Bucket: aws.String(bucket),
+        Key:    aws.String(key),
+        Tagging: &s3.Tagging{
+            TagSet: updatedTags,
+        },
+    })
+    if err != nil {
+        return fmt.Errorf("failed to add object tag: %w", err)
+    }
+    log.Println("Tags applied successfully")
+    return nil
+}
