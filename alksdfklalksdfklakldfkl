@@ -1,0 +1,106 @@
+package config
+
+import (
+	"os"
+	"strconv"
+	"time"
+)
+
+const (
+	DefaultOTELEndpoint  = "https://example.com/otel"
+	DefaultAPIKey        = ""
+	DefaultGlooCookie    = ""
+	DefaultMaxRetries    = 3
+	DefaultBackoff       = 2 * time.Second
+	DefaultBackoffMult   = 2.0
+	DefaultBatchChanSize = 5
+	DefaultPrintJSON     = false
+)
+
+type Config struct {
+	OTELEndpoint  string
+	APIKey        string
+	GlooCookie    string
+	MaxRetries    int
+	Backoff       time.Duration
+	BackoffMult   float64
+	BatchChanSize int
+	PrintJSON     bool
+}
+
+func Load() *Config {
+	cfg := &Config{}
+
+	if endpoint := os.Getenv("OTEL_ENDPOINT"); endpoint != "" {
+		cfg.OTELEndpoint = endpoint
+	} else {
+		cfg.OTELEndpoint = DefaultOTELEndpoint
+	}
+
+	if apiKey := os.Getenv("API_KEY"); apiKey != "" {
+		cfg.APIKey = apiKey
+	} else {
+		cfg.APIKey = DefaultAPIKey
+	}
+
+	if cookie := os.Getenv("GLOO_COOKIE"); cookie != "" {
+		cfg.GlooCookie = cookie
+	} else {
+		cfg.GlooCookie = DefaultGlooCookie
+	}
+
+	if retries := os.Getenv("MAX_RETRIES"); retries != "" {
+		if val, err := strconv.Atoi(retries); err == nil {
+			cfg.MaxRetries = val
+		} else {
+			cfg.MaxRetries = DefaultMaxRetries
+		}
+	} else {
+		cfg.MaxRetries = DefaultMaxRetries
+	}
+
+	if backoff := os.Getenv("BACKOFF"); backoff != "" {
+		if val, err := time.ParseDuration(backoff); err == nil {
+			cfg.Backoff = val
+		} else {
+			cfg.Backoff = DefaultBackoff
+		}
+	} else {
+		cfg.Backoff = DefaultBackoff
+	}
+
+	if backoffMult := os.Getenv("BACKOFF_MULT"); backoffMult != "" {
+		if val, err := strconv.ParseFloat(backoffMult, 64); err == nil {
+			cfg.BackoffMult = val
+		} else {
+			cfg.BackoffMult = DefaultBackoffMult
+		}
+	} else {
+		cfg.BackoffMult = DefaultBackoffMult
+	}
+
+	if chanSize := os.Getenv("BATCH_CHAN_SIZE"); chanSize != "" {
+		if val, err := strconv.Atoi(chanSize); err == nil {
+			cfg.BatchChanSize = val
+		} else {
+			cfg.BatchChanSize = DefaultBatchChanSize
+		}
+	} else {
+		cfg.BatchChanSize = DefaultBatchChanSize
+	}
+
+	if print := os.Getenv("PRINT_JSON"); print == "true" {
+		cfg.PrintJSON = true
+	} else {
+		cfg.PrintJSON = DefaultPrintJSON
+	}
+
+	return cfg
+}
+if cfg.APIKey != "" {
+	req.Header.Set("x-api-key", cfg.APIKey) // or "Authorization" if needed
+}
+
+if cfg.GlooCookie != "" {
+	req.Header.Set("Cookie", cfg.GlooCookie)
+}
