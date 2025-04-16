@@ -1,0 +1,3 @@
+TLSClientConfig: &tls.Config{
+            InsecureSkipVerify: true, // Skip certificate verification
+        },
