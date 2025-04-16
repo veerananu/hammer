@@ -1,0 +1,23 @@
+		if !hadErrors {
+			if os.Getenv("LOCAL_TEST") == "true" {
+				log.Printf("[LOCAL_TEST] Would update s3://%s/%s as processed", bucket, key)
+			} else {
+				s3Client, err := s3.GetClient()
+				if err != nil {
+					log.Printf("Failed to reinitialize S3 client for update: %v", err)
+				} else {
+					err = s3.UpdateObjectStatus(s3Client, bucket, key)
+					if err != nil {
+						log.Printf("Error updating object status for %s/%s: %v", bucket, key, err)
+					} else {
+						log.Printf("Successfully updated object status for %s/%s", bucket, key)
+					}
+				}
+			}
+		} else {
+			log.Printf("Skipping S3 update for s3://%s/%s due to posting errors.", bucket, key)
+		}
+	}
+
+	return nil
+}
