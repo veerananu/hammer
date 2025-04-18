@@ -1,0 +1,35 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+)
+
+func main() {
+	cwd, err := os.Getwd()
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("🔍 Current Working Directory:", cwd)
+
+	certPath := filepath.Join(cwd, "bnk_cert.pem")
+	fmt.Println("📄 Looking for cert at:", certPath)
+
+	_, err = os.Stat(certPath)
+	if err != nil {
+		fmt.Println("❌ ERROR: Cert not found at path:", certPath)
+		fmt.Println("Details:", err)
+	} else {
+		fmt.Println("✅ Found cert at path:", certPath)
+	}
+
+	fmt.Println("\n📁 Listing files in directory:")
+	files, err := os.ReadDir(cwd)
+	if err != nil {
+		panic(err)
+	}
+	for _, file := range files {
+		fmt.Println(" -", file.Name())
+	}
+}
