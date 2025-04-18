@@ -1,0 +1,72 @@
+package httpclient
+
+import (
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+	"io/ioutil"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"time"
+)
+
+// ReadFileFunc allows overriding in tests
+var ReadFileFunc = ioutil.ReadFile
+
+// GetHTTPClient creates an HTTP client with a custom CA certificate.
+func GetHTTPClient() (*http.Client, error) {
+	// Load the system cert pool
+	rootCAs, err := x509.SystemCertPool()
+	if err != nil {
+		return nil, fmt.Errorf("❌ error creating system cert pool: %v", err)
+	}
+
+	// Get current working directory
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("❌ unable to get working directory: %v", err)
+	}
+	log.Printf("📂 Current working directory: %s", cwd)
+
+	// Resolve absolute path to cert file
+	certPath := filepath.Join(cwd, "bnk_cert.pem") // Change if your filename is different
+	absPath, err := filepath.Abs(certPath)
+	if err != nil {
+		return nil, fmt.Errorf("❌ failed to resolve absolute cert path: %v", err)
+	}
+	log.Printf("📍 Absolute path to cert: %s", absPath)
+
+	// Read the certificate file
+	certBytes, err := ReadFileFunc(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("❌ error reading CA certificate at %s: %v", absPath, err)
+	}
+
+	// Append cert to cert pool
+	if ok := rootCAs.AppendCertsFromPEM(certBytes); !ok {
+		log.Println("⚠️ No certs appended from PEM. Using only system certs.")
+	}
+
+	// TLS configuration
+	tlsConfig := &tls.Config{
+		RootCAs: rootCAs,
+	}
+
+	// HTTP transport configuration
+	transport := &http.Transport{
+		TLSClientConfig:     tlsConfig,
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 30,
+	}
+
+	// HTTP client
+	client := &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: transport,
+	}
+
+	log.Println("✅ HTTP client with custom CA cert successfully created")
+	return client, nil
+}
