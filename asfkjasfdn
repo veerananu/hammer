@@ -1,0 +1,16 @@
+var certPath string
+
+// Prefer an explicit environment variable first (for flexibility)
+if val := os.Getenv("CA_CERT_FILE"); val != "" {
+	certPath = val
+	log.Printf("Using CA cert from CA_CERT_FILE env: %s", certPath)
+} else {
+	// Try to infer from executable path
+	exePath, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("unable to get executable path: %v", err)
+	}
+	exeDir := filepath.Dir(exePath)
+	certPath = filepath.Join(exeDir, "bnk_cert.pem")
+	log.Printf("Using CA cert from resolved path: %s", certPath)
+}
