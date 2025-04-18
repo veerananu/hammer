@@ -1,0 +1,52 @@
+package httpclient
+
+import (
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+	"io/ioutil"
+	"net/http"
+	"os"
+	"path/filepath"
+	"time"
+)
+
+// ReadFileFunc allows mocking during tests.
+var ReadFileFunc = ioutil.ReadFile
+
+func GetHTTPClient() (*http.Client, error) {
+	rootCAs, err := x509.SystemCertPool()
+	if err != nil {
+		return nil, fmt.Errorf("error creating system cert pool: %v", err)
+	}
+
+	// Determine full path to cert file
+	exePath, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("unable to get executable path: %v", err)
+	}
+	exeDir := filepath.Dir(exePath)
+	certPath := filepath.Join(exeDir, "bnk_cert.pem")
+
+	// Debug: print current directory and cert path
+	fmt.Printf("Looking for cert at: %s\n", certPath)
+
+	// Read certificate
+	certBytes, err := ReadFileFunc(certPath)
+	if err != nil {
+		return nil, fmt.Errorf("error reading CA certificate at %s: %v", certPath, err)
+	}
+
+	if ok := rootCAs.AppendCertsFromPEM(certBytes); !ok {
+		fmt.Println("No certs appended, using system certs only")
+	}
+
+	tlsConfig := &tls.Config{
+		RootCAs: rootCAs,
+	}
+
+	return &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: tlsConfig},
+	}, nil
+}
