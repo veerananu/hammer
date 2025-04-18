@@ -1,0 +1,127 @@
+package sender_test
+
+import (
+	"context"
+	"os"
+	"testing"
+	"time"
+
+	"my-lambda-project/internal/config"
+	"my-lambda-project/internal/metrics"
+	"my-lambda-project/internal/sender"
+)
+
+// TestSenderLocalTestMode verifies the Sender function in local test mode.
+// It checks that metrics are batched correctly based on the batch size and
+// that all metrics are processed before the function completes.
+func TestSenderLocalTestMode(t *testing.T) {
+	// Set environment variable to enable local test mode
+	os.Setenv("LOCAL_TEST", "true")
+	// Clean up environment variable after test
+	t.Cleanup(func() {
+		os.Unsetenv("LOCAL_TEST")
+	})
+
+	// Load configuration (assumes config.Load() works correctly)
+	cfg := config.Load()
+
+	// Define test parameters
+	batchSize := 2
+	flushInterval := 100 * time.Millisecond
+
+	// Create a cancellable context
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Channel to send ResourceMetrics to the Sender
+	resultChan := make(chan metrics.ResourceMetrics, 3)
+
+	// Define dummy ResourceMetrics for testing
+	dummyMetrics := []metrics.ResourceMetrics{
+		{
+			Resource: metrics.Resource{
+				Attributes: []metrics.Attribute{
+					{Key: "testKey1", Value: metrics.AttributeValue{StringValue: "testValue1"}},
+				},
+			},
+			ScopeMetrics: []metrics.ScopeMetrics{
+				{
+					Scope: struct{}{},
+					Metrics: []metrics.Metric{
+						{Name: "dummy_metric1", Unit: "unit", Gauge: metrics.Gauge{DataPoints: []metrics.DataPoint{}}},
+					},
+				},
+			},
+		},
+		{
+			Resource: metrics.Resource{
+				Attributes: []metrics.Attribute{
+					{Key: "testKey2", Value: metrics.AttributeValue{StringValue: "testValue2"}},
+				},
+			},
+			ScopeMetrics: []metrics.ScopeMetrics{
+				{
+					Scope: struct{}{},
+					Metrics: []metrics.Metric{
+						{Name: "dummy_metric2", Unit: "unit", Gauge: metrics.Gauge{DataPoints: []metrics.DataPoint{}}},
+					},
+				},
+			},
+		},
+		{
+			Resource: metrics.Resource{
+				Attributes: []metrics.Attribute{
+					{Key: "testKey3", Value: metrics.AttributeValue{StringValue: "testValue3"}},
+				},
+			},
+			ScopeMetrics: []metrics.ScopeMetrics{
+				{
+					Scope: struct{}{},
+					Metrics: []metrics.Metric{
+						{Name: "dummy_metric3", Unit: "unit", Gauge: metrics.Gauge{DataPoints: []metrics.DataPoint{}}},
+					},
+				},
+			},
+		},
+	}
+
+	// Start the Sender function, which returns a batch channel and a done channel
+	batchChan, done := sender.Sender(ctx, resultChan, cfg, batchSize, flushInterval)
+
+	// Send metrics to the Sender in a separate goroutine
+	go func() {
+		for _, rm := range dummyMetrics {
+			select {
+			case resultChan <- rm:
+				// Successfully sent metric
+			case <-ctx.Done():
+				// Context cancelled, stop sending
+				return
+			}
+		}
+		close(resultChan) // Close channel after all metrics are sent
+	}()
+
+	// Collect batches from the batchChan
+	var batches [][]metrics.ResourceMetrics
+	go func() {
+		for batch := range batchChan {
+			batches = append(batches, batch)
+		}
+	}()
+
+	// Wait for the Sender to finish processing
+	<-done
+
+	// Verify the results
+	// With 3 metrics and a batch size of 2, expect 2 batches: one with 2 metrics, one with 1 metric
+	if len(batches) != 2 {
+		t.Errorf("Expected 2 batches, got %d", len(batches))
+	}
+	if len(batches) > 0 && len(batches[0]) != 2 {
+		t.Errorf("Expected first batch length 2, got %d", len(batches[0]))
+	}
+	if len(batches) > 1 && len(batches[1]) != 1 {
+		t.Errorf("Expected second batch length 1, got %d", len(batches[1]))
+	}
+}
