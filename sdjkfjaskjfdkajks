@@ -1,0 +1,62 @@
+package sender
+
+import (
+	"bytes"
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+	"io"
+	"log"
+	"math"
+	"net/http"
+	"os"
+	"sync"
+	"time"
+
+	"my-lambda-project/internal/config"
+	"my-lambda-project/internal/metrics"
+
+	jsoniter "github.com/json-iterator/go"
+)
+
+var jsonLib = jsoniter.ConfigCompatibleWithStandardLibrary
+
+// client is the HTTP client used to send requests, initialized in init().
+var client *http.Client
+
+// init initializes the HTTP client with a custom root CA certificate.
+func init() {
+	// Path to the certificate file in the root directory
+	certFile := "cert.pem"
+	
+	// Read the certificate file
+	certBytes, err := os.ReadFile(certFile)
+	if err != nil {
+		log.Fatalf("Failed to read certificate file %s: %v", certFile, err)
+	}
+	
+	// Create a certificate pool and add the custom root CA
+	certPool := x509.NewCertPool()
+	if !certPool.AppendCertsFromPEM(certBytes) {
+		log.Fatalf("Failed to append certificate from %s to pool", certFile)
+	}
+	
+	// Configure the transport with TLS settings
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 30,
+		TLSClientConfig: &tls.Config{
+			RootCAs: certPool,
+		},
+	}
+	
+	// Initialize the client
+	client = &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: transport,
+	}
+}
+
+// Sender, StartWorkers, worker, and sendBatch functions remain unchanged...
+// [Rest of the existing code follows]
