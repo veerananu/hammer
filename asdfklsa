@@ -1,0 +1,76 @@
+package httpclient
+
+import (
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+	"io/ioutil"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"time"
+)
+
+var ReadFileFunc = ioutil.ReadFile
+
+func GetHTTPClient() (*http.Client, error) {
+	rootCAs, err := x509.SystemCertPool()
+	if err != nil {
+		return nil, fmt.Errorf("error creating system cert pool: %v", err)
+	}
+
+	var certPath string
+
+	// STEP 1: Prefer CA_CERT_FILE
+	if val := os.Getenv("CA_CERT_FILE"); val != "" {
+		certPath = val
+		log.Printf("DEBUG: Using CA cert from env (CA_CERT_FILE): %s", certPath)
+	} else {
+		// STEP 2: Fall back to current working directory
+		cwd, err := os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("unable to get working directory: %v", err)
+		}
+		certPath = filepath.Join(cwd, "bnk_cert.pem")
+		log.Printf("DEBUG: Using CA cert from working directory: %s", certPath)
+	}
+
+	// STEP 3: List all files in directory (for debug)
+	dir := filepath.Dir(certPath)
+	log.Printf("DEBUG: Listing contents of cert directory: %s", dir)
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		log.Printf("DEBUG: Failed to list directory %s: %v", dir, err)
+	} else {
+		for _, f := range files {
+			log.Printf("DEBUG: File found: %s", f.Name())
+		}
+	}
+
+	// STEP 4: Attempt to read file
+	certBytes, err := ReadFileFunc(certPath)
+	if err != nil {
+		return nil, fmt.Errorf("FAILED to read CA certificate at %s: %v", certPath, err)
+	}
+	log.Printf("DEBUG: Successfully read CA cert")
+
+	// STEP 5: Append to cert pool
+	if ok := rootCAs.AppendCertsFromPEM(certBytes); !ok {
+		log.Println("WARNING: No certs appended, using system certs only")
+	}
+
+	transport := &http.Transport{
+		TLSClientConfig:     &tls.Config{RootCAs: rootCAs},
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 30,
+	}
+
+	client := &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: transport,
+	}
+
+	log.Printf("DEBUG: Returning HTTP client with cert")
+	return client, nil
+}
