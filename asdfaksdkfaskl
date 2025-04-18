@@ -1,0 +1,88 @@
+package sender_test
+
+import (
+	"context"
+	"os"
+	"testing"
+	"time"
+
+	"my-lambda-project/internal/config"
+	"my-lambda-project/internal/metrics"
+	"my-lambda-project/internal/sender"
+)
+
+// TestSenderLocalTestMode verifies that the Sender function batches metrics correctly
+// in local test mode.
+func TestSenderLocalTestMode(t *testing.T) {
+	// Enable local test mode
+	os.Setenv("LOCAL_TEST", "true")
+	t.Cleanup(func() {
+		os.Unsetenv("LOCAL_TEST")
+	})
+
+	// Load configuration
+	cfg := config.Load()
+
+	// Test parameters
+	batchSize := 2
+	flushInterval := 100 * time.Millisecond
+
+	// Create a context
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Input channel for metrics
+	resultChan := make(chan metrics.ResourceMetrics, 2)
+
+	// Dummy metrics
+	dummyMetrics := []metrics.ResourceMetrics{
+		{
+			Resource: metrics.Resource{
+				Attributes: []metrics.Attribute{
+					{Key: "key1", Value: metrics.AttributeValue{StringValue: "value1"}},
+				},
+			},
+			ScopeMetrics: []metrics.ScopeMetrics{
+				{Scope: struct{}{}, Metrics: []metrics.Metric{{Name: "metric1"}}},
+			},
+		},
+		{
+			Resource: metrics.Resource{
+				Attributes: []metrics.Attribute{
+					{Key: "key2", Value: metrics.AttributeValue{StringValue: "value2"}},
+				},
+			},
+			ScopeMetrics: []metrics.ScopeMetrics{
+				{Scope: struct{}{}, Metrics: []metrics.Metric{{Name: "metric2"}}},
+			},
+		},
+	}
+
+	// Start Sender
+	batchChan, done := sender.Sender(ctx, resultChan, cfg, batchSize, flushInterval)
+
+	// Send metrics
+	go func() {
+		for _, rm := range dummyMetrics {
+			resultChan <- rm
+		}
+		close(resultChan)
+	}()
+
+	// Collect batches
+	var batches [][]metrics.ResourceMetrics
+	for batch := range batchChan {
+		batches = append(batches, batch)
+	}
+
+	// Wait for Sender to finish
+	<-done
+
+	// Verify: Expect 1 batch with 2 metrics
+	if len(batches) != 1 {
+		t.Errorf("Expected 1 batch, got %d", len(batches))
+	}
+	if len(batches) > 0 && len(batches[0]) != 2 {
+		t.Errorf("Expected batch length 2, got %d", len(batches[0]))
+	}
+}
