@@ -1,0 +1,75 @@
+package httpclient
+
+import (
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+	"io/ioutil"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"time"
+)
+
+// ReadFileFunc allows mocking or overriding in tests.
+var ReadFileFunc = ioutil.ReadFile
+
+// GetHTTPClient creates an HTTP client with a custom CA cert.
+func GetHTTPClient() (*http.Client, error) {
+	// Load system cert pool
+	rootCAs, err := x509.SystemCertPool()
+	if err != nil {
+		return nil, fmt.Errorf("error creating system cert pool: %v", err)
+	}
+
+	// Step 1: Resolve cert path (env first, then working dir fallback)
+	var certPath string
+	if val := os.Getenv("CA_CERT_FILE"); val != "" {
+		certPath = val
+		log.Printf("🔐 Using CA cert from CA_CERT_FILE env: %s", certPath)
+	} else {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("unable to get working directory: %v", err)
+		}
+		certPath = filepath.Join(cwd, "bnk_cert.pem")
+		log.Printf("🔐 Using CA cert from working directory: %s", certPath)
+	}
+
+	// Step 2: Print directory contents for debug
+	files, err := os.ReadDir(filepath.Dir(certPath))
+	if err == nil {
+		log.Printf("📁 Files in %s:", filepath.Dir(certPath))
+		for _, f := range files {
+			log.Printf(" - %s", f.Name())
+		}
+	}
+
+	// Step 3: Read cert file
+	certBytes, err := ReadFileFunc(certPath)
+	if err != nil {
+		return nil, fmt.Errorf("❌ error reading CA certificate at %s: %v", certPath, err)
+	}
+
+	// Step 4: Add to system certs
+	if ok := rootCAs.AppendCertsFromPEM(certBytes); !ok {
+		log.Println("⚠️ No certs appended from PEM. System certs only will be used.")
+	}
+
+	// Step 5: TLS + transport settings
+	tlsConfig := &tls.Config{RootCAs: rootCAs}
+	transport := &http.Transport{
+		TLSClientConfig:     tlsConfig,
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 30,
+	}
+
+	// Step 6: Return the HTTP client
+	client := &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: transport,
+	}
+	log.Println("✅ HTTP client with custom CA cert successfully created")
+	return client, nil
+}
