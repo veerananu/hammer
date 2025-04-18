@@ -1,0 +1,9 @@
+var client *http.Client
+
+func init() {
+	var err error
+	client, err = httpclient.GetHTTPClient()
+	if err != nil {
+		log.Fatalf("Failed to initialize HTTP client with cert: %v", err)
+	}
+}
