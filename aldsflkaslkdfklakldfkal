@@ -1,0 +1,83 @@
+package httpclient
+
+import (
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+	"io/ioutil"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"time"
+)
+
+// ReadFileFunc allows mocking or overriding in tests.
+var ReadFileFunc = ioutil.ReadFile
+
+// GetHTTPClient creates an HTTP client with a custom CA certificate.
+func GetHTTPClient() (*http.Client, error) {
+	// Step 1: Load system cert pool
+	rootCAs, err := x509.SystemCertPool()
+	if err != nil {
+		return nil, fmt.Errorf("error creating system cert pool: %v", err)
+	}
+
+	// Step 2: Determine the path to the certificate
+	var certPath string
+	if val := os.Getenv("CA_CERT_FILE"); val != "" {
+		certPath = val
+		log.Printf("🔐 Using CA cert from CA_CERT_FILE env: %s", certPath)
+	} else {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("unable to get working directory: %v", err)
+		}
+		certPath = filepath.Join(cwd, "bnk_cert.pem") // Or change to bnk.cert if that's the name
+		log.Printf("🔐 Using CA cert from working directory: %s", certPath)
+	}
+
+	// Step 3: Show resolved absolute path
+	absPath, _ := filepath.Abs(certPath)
+	log.Printf("📍 Absolute cert path: %s", absPath)
+
+	// Step 4: Print directory listing (correctly using the parent dir)
+	certDir := filepath.Dir(certPath)
+	files, err := os.ReadDir(certDir)
+	if err == nil {
+		log.Printf("📁 Files in %s:", certDir)
+		for _, f := range files {
+			log.Printf(" - %s", f.Name())
+		}
+	}
+
+	// Step 5: Read the certificate file
+	certBytes, err := ReadFileFunc(certPath)
+	if err != nil {
+		return nil, fmt.Errorf("❌ error reading CA certificate at %s: %v", certPath, err)
+	}
+
+	// Step 6: Add the cert to the system pool
+	if ok := rootCAs.AppendCertsFromPEM(certBytes); !ok {
+		log.Println("⚠️ No certs appended from PEM. System certs only will be used.")
+	}
+
+	// Step 7: Create custom HTTP client with TLS
+	tlsConfig := &tls.Config{
+		RootCAs: rootCAs,
+	}
+
+	transport := &http.Transport{
+		TLSClientConfig:     tlsConfig,
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 30,
+	}
+
+	client := &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: transport,
+	}
+
+	log.Println("✅ HTTP client with custom CA cert successfully created")
+	return client, nil
+}
