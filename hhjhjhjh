@@ -1,0 +1,57 @@
+func TestSenderLocalTestMode(t *testing.T) {
+	// Enable local test mode
+	os.Setenv("LOCAL_TEST", "true")
+	t.Cleanup(func() {
+		os.Unsetenv("LOCAL_TEST")
+	})
+
+	// Load configuration
+	cfg := config.Load()
+
+	// Test parameters
+	batchSize := 1
+	flushInterval := 100 * time.Millisecond
+
+	// Create context
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Input channel
+	resultChan := make(chan metrics.ResourceMetrics, 1)
+
+	// Single dummy metric
+	dummyMetric := metrics.ResourceMetrics{
+		Resource: metrics.Resource{
+			Attributes: []metrics.Attribute{
+				{Key: "key", Value: metrics.AttributeValue{StringValue: "value"}},
+			},
+		},
+		ScopeMetrics: []metrics.ScopeMetrics{
+			{Scope: struct{}{}, Metrics: []metrics.Metric{{Name: "metric"}}},
+		},
+	}
+
+	// Start Sender
+	batchChan, done := sender.Sender(ctx, resultChan, cfg, batchSize, flushInterval)
+
+	// Send metric
+	resultChan <- dummyMetric
+	close(resultChan)
+
+	// Collect batches
+	batches := [][]metrics.ResourceMetrics{}
+	for batch := range batchChan {
+		batches = append(batches, batch)
+	}
+
+	// Wait for completion
+	<-done
+
+	// Verify: Expect 1 batch with 1 metric
+	if len(batches) != 1 {
+		t.Errorf("Expected 1 batch, got %d", len(batches))
+	}
+	if len(batches) > 0 && len(batches[0]) != 1 {
+		t.Errorf("Expected batch length 1, got %d", len(batches[0]))
+	}
+}
