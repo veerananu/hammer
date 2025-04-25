@@ -1,0 +1,154 @@
+// cmd/check-hours/main.go
+package main
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/aws/aws-lambda-go/lambda"
+	"go.uber.org/zap"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+)
+
+/* ───── Connect wrapper types (ignored) ───── */
+
+type connectEvent struct{} // request body no longer used
+type connectResp struct {
+	IsOpen bool   `json:"isOpen"`
+	Msg    string `json:"msg,omitempty"`
+}
+
+/* ─────────── Globals ─────────── */
+
+var (
+	ddb       *dynamodb.Client
+	tableName = "OperatingHours"                // change if you renamed the table
+	entityID  = "CMK"                           // single fixed record to check
+	centralTZ = time.FixedZone("CST", -6*60*60) // UTC-06:00, no DST
+	log       *zap.SugaredLogger
+)
+
+/* ─────────── init() ─────────── */
+
+func init() {
+	zl, err := zap.NewProduction()
+	if err != nil {
+		panic(err)
+	}
+	log = zl.Sugar()
+
+	cfg, err := config.LoadDefaultConfig(context.Background())
+	if err != nil {
+		log.Fatalf("load AWS cfg: %v", err)
+	}
+	ddb = dynamodb.NewFromConfig(cfg)
+}
+
+/* ─────────── Handler ─────────── */
+
+func handler(ctx context.Context, _ connectEvent) (connectResp, error) {
+	/* 1️⃣ GetItem for the single CMK row */
+	out, err := ddb.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]types.AttributeValue{
+			"entityId": &types.AttributeValueMemberS{Value: entityID},
+		},
+	})
+	if err != nil {
+		log.Errorw("dynamodb get failed", "error", err)
+		return connectResp{IsOpen: false, Msg: "dynamodb error"}, nil
+	}
+	if out.Item == nil {
+		log.Infow("entityId not found", "entityId", entityID)
+		return connectResp{IsOpen: false}, nil
+	}
+
+	/* 2️⃣ Unmarshal operatingHours map */
+	var row struct {
+		OperatingHours map[string]struct {
+			OpenTime  string `dynamodbav:"openTime"`
+			CloseTime string `dynamodbav:"closeTime"`
+		} `dynamodbav:"operatingHours"`
+	}
+	if err := attributevalue.UnmarshalMap(out.Item, &row); err != nil {
+		log.Errorw("unmarshal failed", "error", err)
+		return connectResp{IsOpen: false, Msg: "unmarshal error"}, nil
+	}
+
+	/* 3️⃣ Current time (CST, overrideable for tests) */
+	now := time.Now().UTC().In(centralTZ)
+	if ts := os.Getenv("FORCE_TIME"); ts != "" {
+		if t, err := time.ParseInLocation(time.RFC3339, ts, centralTZ); err == nil {
+			now = t
+			log.Debugw("FORCE_TIME active", "now", now)
+		} else {
+			log.Warnw("bad FORCE_TIME value", "error", err)
+		}
+	}
+	day := now.Weekday().String()
+
+	/* 4️⃣ Fetch today’s hours */
+	today, ok := row.OperatingHours[day]
+	if !ok {
+		log.Infow("no hours for day", "day", day)
+		return connectResp{IsOpen: false}, nil
+	}
+	if today.OpenTime == "00:00" && today.CloseTime == "00:00" {
+		log.Infow("closed all day", "day", day)
+		return connectResp{IsOpen: false}, nil
+	}
+
+	/* 5️⃣ Compare times */
+	openT, err1 := time.ParseInLocation("15:04", today.OpenTime, centralTZ)
+	closeT, err2 := time.ParseInLocation("15:04", today.CloseTime, centralTZ)
+	if err1 != nil || err2 != nil {
+		log.Errorw("bad time format", "open", today.OpenTime, "close", today.CloseTime)
+		return connectResp{IsOpen: false, Msg: "bad time format"}, nil
+	}
+	openT = time.Date(now.Year(), now.Month(), now.Day(),
+		openT.Hour(), openT.Minute(), 0, 0, centralTZ)
+	closeT = time.Date(now.Year(), now.Month(), now.Day(),
+		closeT.Hour(), closeT.Minute(), 0, 0, centralTZ)
+
+	isOpen := !now.Before(openT) && now.Before(closeT)
+	log.Infow("evaluation complete", "now", now.Format("15:04"), "isOpen", isOpen)
+	return connectResp{IsOpen: isOpen}, nil
+}
+
+/* ─────────── Helpers for LOCAL_TEST ─────────── */
+
+func (r connectResp) String() string {
+	b, _ := json.MarshalIndent(r, "", "  ")
+	return string(b)
+}
+
+func runLocal() {
+	var ev connectEvent
+	if err := json.NewDecoder(bufio.NewReader(os.Stdin)).Decode(&ev); err != nil {
+		// Accept empty input for quick tests
+	}
+	resp, err := handler(context.Background(), ev)
+	if err != nil {
+		log.Fatalf("handler err: %v", err)
+	}
+	fmt.Println(resp.String())
+}
+
+/* ─────────── main() ─────────── */
+
+func main() {
+	if os.Getenv("LOCAL_TEST") == "true" {
+		runLocal()
+		return
+	}
+	lambda.Start(handler)
+}
