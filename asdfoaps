@@ -1,0 +1,162 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/connect"
+	ct "github.com/aws/aws-sdk-go-v2/service/connect/types"
+	"go.uber.org/zap"
+)
+
+// JSON shape
+type Agent struct {
+	Id        string `json:"id"`
+	FirstName string `json:"first_name,omitempty"`
+	LastName  string `json:"last_name,omitempty"`
+}
+
+func main() {
+	// ---- flags ----------------------------------------------------------------
+	instanceID := flag.String("instance-id", "", "Connect instance ID")
+	alias := flag.String("alias", "", "Connect instance alias")
+	outPath := flag.String("output", "agents.json", "output file")
+	flag.Parse()
+
+	// ---- logger ---------------------------------------------------------------
+	logger, _ := zap.NewProduction()
+	defer logger.Sync()
+	log := logger.Sugar()
+
+	ctx := context.Background()
+
+	// ---- AWS client -----------------------------------------------------------
+	cfg, err := config.LoadDefaultConfig(ctx)
+	if err != nil {
+		log.Fatalw("load AWS config", "error", err)
+	}
+	svc := connect.NewFromConfig(cfg)
+
+	// ---- pick instance --------------------------------------------------------
+	instID, err := resolveInstanceID(ctx, svc, *instanceID, *alias, log)
+	if err != nil {
+		log.Fatalw("resolve instance", "error", err)
+	}
+
+	// ---- fetch agents ---------------------------------------------------------
+	agents, err := fetchAgents(ctx, svc, instID, log)
+	if err != nil {
+		log.Fatalw("fetch agents", "error", err)
+	}
+
+	// ---- write JSON -----------------------------------------------------------
+	if err := writeJSON(*outPath, agents); err != nil {
+		log.Fatalw("write JSON", "error", err)
+	}
+	log.Infow("agents exported", "count", len(agents), "file", *outPath)
+}
+
+// -----------------------------------------------------------------------------
+// helpers
+// -----------------------------------------------------------------------------
+
+func resolveInstanceID(
+	ctx context.Context,
+	svc *connect.Client,
+	idFlag, aliasFlag string,
+	log *zap.SugaredLogger,
+) (string, error) {
+	if idFlag != "" {
+		return idFlag, nil
+	}
+
+	out, err := svc.ListInstances(ctx, &connect.ListInstancesInput{})
+	if err != nil {
+		return "", err
+	}
+	if len(out.InstanceSummaryList) == 0 {
+		return "", fmt.Errorf("no Connect instances found")
+	}
+
+	if aliasFlag != "" {
+		for _, inst := range out.InstanceSummaryList {
+			if strings.EqualFold(aliasFlag, aws.ToString(inst.InstanceAlias)) {
+				log.Infow("using Connect instance", "alias", aliasFlag)
+				return aws.ToString(inst.Id), nil
+			}
+		}
+		return "", fmt.Errorf("no instance with alias %q", aliasFlag)
+	}
+
+	if len(out.InstanceSummaryList) == 1 {
+		log.Infow("auto-selected sole Connect instance")
+		return aws.ToString(out.InstanceSummaryList[0].Id), nil
+	}
+
+	var aliases []string
+	for _, inst := range out.InstanceSummaryList {
+		aliases = append(aliases, aws.ToString(inst.InstanceAlias))
+	}
+	return "", fmt.Errorf("multiple instances: %s – pass --alias or --instance-id",
+		strings.Join(aliases, ", "))
+}
+
+func fetchAgents(
+	ctx context.Context,
+	svc *connect.Client,
+	instanceID string,
+	log *zap.SugaredLogger,
+) ([]Agent, error) {
+	var agents []Agent
+
+	p := connect.NewListUsersPaginator(svc, &connect.ListUsersInput{
+		InstanceId: aws.String(instanceID),
+	})
+
+	for p.HasMorePages() {
+		page, err := p.NextPage(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, summary := range page.UserSummaryList {
+			time.Sleep(500 * time.Millisecond) // stay ≤2 req/s
+			resp, err := svc.DescribeUser(ctx, &connect.DescribeUserInput{
+				InstanceId: aws.String(instanceID),
+				UserId:     summary.Id,
+			})
+			if err != nil {
+				log.Warnw("DescribeUser failed (skipped)", "userID", aws.ToString(summary.Id), "error", err)
+				continue
+			}
+			agents = append(agents, toAgent(resp.User))
+		}
+	}
+	return agents, nil
+}
+
+func toAgent(u *ct.User) Agent {
+	a := Agent{Id: aws.ToString(u.Id)}
+	if u.IdentityInfo != nil {
+		a.FirstName = aws.ToString(u.IdentityInfo.FirstName)
+		a.LastName = aws.ToString(u.IdentityInfo.LastName)
+	}
+	return a
+}
+
+func writeJSON(path string, data interface{}) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	enc := json.NewEncoder(f)
+	enc.SetIndent("", "  ")
+	return enc.Encode(data)
+}
