@@ -1,0 +1,8 @@
+ $env:GOOS  = "linux"
+obootcamp\dynamoproject> $env:GOARCH = "amd64"
+PSesktop\gobootcamp\dynamoproject> go build -o main
+PS Ca\Desktop\gobootcamp\dynamoproject> Compress-Archive -Path main -DestinationPath function.zip -Force
+PS ra\Desktop\gobootcamp\dynamoproject> go build -o bootstrap
+Pa\Desktop\gobootcamp\dynamoproject> Compress-Archive -Path bootstrap -DestinationPath function.zip -Force
+PS C:\gobootcamp\dynamoproject> go build -o bootstrap
+PSnamoproject> Compress-Archive -Path bootstrap -DestinationPath function.zip -Forc
