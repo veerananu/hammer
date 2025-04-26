@@ -1,0 +1,15 @@
+C:\path\to\your\repo> set LOCAL_TEST=true
+(Optional) Fix the “current” time
+If you want to force a specific timestamp for testing, set FORCE_TIME to an RFC-3339 string in CST:
+
+cmd
+Copy
+Edit
+C:\path\to\your\repo> set FORCE_TIME=2025-04-26T10:30:00-06:00
+Run the code with an empty event
+Your handler ignores the body, so you can just pipe {} (or nothing) into it:
+
+cmd
+Copy
+Edit
+C:\path\to\your\repo> echo {} | go run cmd/check-hours/main.go
