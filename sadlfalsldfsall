@@ -1,0 +1,224 @@
+// cmd/item/main.go
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"regexp"
+	"strings"
+
+	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"go.uber.org/zap"
+)
+
+/* ───── request / response ───── */
+
+type req struct {
+	EntityID string            `json:"entityId"`
+	Hours    map[string]oneDay `json:"hours,omitempty"`
+	QueueArn string            `json:"queueArn,omitempty"`
+}
+
+type oneDay struct {
+	OpenTime  string `json:"openTime"`
+	CloseTime string `json:"closeTime"`
+}
+
+type apiResp struct {
+	Message  string            `json:"message,omitempty"`
+	Hours    map[string]oneDay `json:"hours,omitempty"`
+	QueueArn string            `json:"queueArn,omitempty"`
+}
+
+/* ───── globals ───── */
+
+var (
+	tableName = mustEnv("TABLE_NAME")
+	ddb       *dynamodb.Client
+	log       *zap.Logger
+	timeRE    = regexp.MustCompile(`^[0-2]\d:[0-5]\d$`)
+)
+
+/* ───── Lambda entrypoint ───── */
+
+func handler(ctx context.Context, ev events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+	switch ev.HTTPMethod {
+	case "GET":
+		return handleGet(ctx, ev)
+	case "POST", "PUT":
+		return handleUpdate(ctx, ev)
+	default:
+		return fail(405, "method not allowed"), nil
+	}
+}
+
+/* ───── GET handler ───── */
+
+func handleGet(ctx context.Context, ev events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+	entityID := ev.QueryStringParameters["entityId"]
+	if strings.TrimSpace(entityID) == "" {
+		return fail(400, "entityId query parameter required"), nil
+	}
+
+	out, err := ddb.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]types.AttributeValue{
+			"entityId": &types.AttributeValueMemberS{Value: entityID},
+		},
+	})
+	if err != nil {
+		log.Error("dynamodb get failed", zap.Error(err))
+		return fail(500, "internal error"), nil
+	}
+	if out.Item == nil {
+		return fail(404, "not found"), nil
+	}
+
+	resp := apiResp{
+		Hours: make(map[string]oneDay),
+	}
+
+	// Read queueArn instead of queue
+	if v, ok := out.Item["queueArn"]; ok {
+		if qs, ok2 := v.(*types.AttributeValueMemberS); ok2 {
+			resp.QueueArn = qs.Value
+		}
+	}
+
+	if oh, ok := out.Item["operatingHours"]; ok {
+		if m, ok2 := oh.(*types.AttributeValueMemberM); ok2 {
+			for day, av := range m.Value {
+				if dayM, ok3 := av.(*types.AttributeValueMemberM); ok3 {
+					o := dayM.Value["openTime"].(*types.AttributeValueMemberS).Value
+					c := dayM.Value["closeTime"].(*types.AttributeValueMemberS).Value
+					resp.Hours[day] = oneDay{OpenTime: o, CloseTime: c}
+				}
+			}
+		}
+	}
+
+	b, _ := json.Marshal(resp)
+	return events.APIGatewayProxyResponse{StatusCode: 200, Body: string(b)}, nil
+}
+
+/* ───── POST/PUT handler ───── */
+
+func handleUpdate(ctx context.Context, ev events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+	var body req
+	if err := json.Unmarshal([]byte(ev.Body), &body); err != nil {
+		return fail(400, "invalid JSON: "+err.Error()), nil
+	}
+	if err := validate(body); err != nil {
+		return fail(400, err.Error()), nil
+	}
+
+	names := make(map[string]string)
+	values := make(map[string]types.AttributeValue)
+	var setParts []string
+	i := 0
+
+	// Write queueArn instead of queue
+	if strings.TrimSpace(body.QueueArn) != "" {
+		names["#QA"] = "queueArn"
+		values[":qa"] = &types.AttributeValueMemberS{Value: body.QueueArn}
+		setParts = append(setParts, "#QA = :qa")
+	}
+
+	if len(body.Hours) > 0 {
+		for day, h := range body.Hours {
+			dAlias := fmt.Sprintf("#d%d", i)
+			vAlias := fmt.Sprintf(":v%d", i)
+			names[dAlias] = day
+			values[vAlias] = makeTimeMap(h.OpenTime, h.CloseTime)
+			setParts = append(setParts, fmt.Sprintf("operatingHours.%s = %s", dAlias, vAlias))
+			i++
+		}
+	}
+
+	input := &dynamodb.UpdateItemInput{
+		TableName:                 aws.String(tableName),
+		Key:                       map[string]types.AttributeValue{"entityId": &types.AttributeValueMemberS{Value: body.EntityID}},
+		UpdateExpression:          aws.String("SET " + strings.Join(setParts, ", ")),
+		ExpressionAttributeNames:  names,
+		ExpressionAttributeValues: values,
+	}
+	if _, err := ddb.UpdateItem(ctx, input); err != nil {
+		log.Error("dynamodb update failed", zap.Error(err))
+		return fail(500, "internal error"), nil
+	}
+
+	return success(fmt.Sprintf("updated %d field(s) for %s", len(setParts), body.EntityID)), nil
+}
+
+/* ───── validation & helpers ───── */
+
+func validate(r req) error {
+	if r.EntityID == "" {
+		return errors.New("entityId is required")
+	}
+	if len(r.Hours) == 0 && strings.TrimSpace(r.QueueArn) == "" {
+		return errors.New("either hours or queueArn must be provided")
+	}
+	for day, h := range r.Hours {
+		if !timeRE.MatchString(h.OpenTime) || !timeRE.MatchString(h.CloseTime) {
+			return fmt.Errorf("%s times must be HH:MM (24h)", day)
+		}
+		if h.OpenTime >= h.CloseTime {
+			return fmt.Errorf("%s openTime must be before closeTime", day)
+		}
+	}
+	return nil
+}
+
+func makeTimeMap(o, c string) *types.AttributeValueMemberM {
+	return &types.AttributeValueMemberM{Value: map[string]types.AttributeValue{
+		"openTime":  &types.AttributeValueMemberS{Value: o},
+		"closeTime": &types.AttributeValueMemberS{Value: c},
+	}}
+}
+
+func success(msg string) events.APIGatewayProxyResponse {
+	b, _ := json.Marshal(apiResp{Message: msg})
+	return events.APIGatewayProxyResponse{StatusCode: 200, Body: string(b)}
+}
+
+func fail(code int, msg string) events.APIGatewayProxyResponse {
+	b, _ := json.Marshal(apiResp{Message: msg})
+	return events.APIGatewayProxyResponse{StatusCode: code, Body: string(b)}
+}
+
+func mustEnv(k string) string {
+	v := os.Getenv(k)
+	if v == "" {
+		fmt.Fprintf(os.Stderr, "missing env %s\n", k)
+		os.Exit(1)
+	}
+	return v
+}
+
+/* ───── bootstrap ───── */
+
+func init() {
+	var err error
+	log, err = zap.NewProduction()
+	if err != nil {
+		panic(err)
+	}
+	cfg, err := config.LoadDefaultConfig(context.Background())
+	if err != nil {
+		log.Fatal("aws cfg", zap.Error(err))
+	}
+	ddb = dynamodb.NewFromConfig(cfg)
+}
+
+func main() {
+	lambda.Start(handler)
+}
