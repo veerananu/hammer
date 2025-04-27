@@ -1,0 +1,221 @@
+package main
+
+import (
+    "bufio"
+    "context"
+    "encoding/json"
+    "fmt"
+    "os"
+    "time"
+
+    "github.com/aws/aws-lambda-go/lambda"
+    "go.uber.org/zap"
+
+    "github.com/aws/aws-sdk-go-v2/aws"
+    "github.com/aws/aws-sdk-go-v2/config"
+    "github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
+    "github.com/aws/aws-sdk-go-v2/service/dynamodb"
+    "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+
+    "your/module/path/httpclient" // replace with your actual module path
+)
+
+/* ───── Amazon Connect wrapper types ───── */
+
+type connectEvent struct{} // request body unused
+
+type connectResp struct {
+    IsOpen bool   `json:"isOpen"`
+    Queue  string `json:"queue,omitempty"` // returned only when open AND queueArn present
+    Msg    string `json:"msg,omitempty"`   // diagnostic text for logs / testing
+}
+
+/* ─────────── Globals ─────────── */
+
+var (
+    ddb       *dynamodb.Client
+    tableName = "OperatingHours"
+    entityID  = "CMK"                           // single fixed record (can be changed later)
+    centralTZ = time.FixedZone("CST", -6*60*60) // UTC-06:00, no DST
+    log       *zap.SugaredLogger
+)
+
+/* ─────────── init() ─────────── */
+
+func init() {
+    // initialize structured logger
+    zl, err := zap.NewProduction()
+    if err != nil {
+        panic(err)
+    }
+    log = zl.Sugar()
+
+    // create custom HTTP client with your CA bundle
+    httpClient, err := httpclient.New()
+    if err != nil {
+        log.Fatalf("failed to init HTTP client: %v", err)
+    }
+
+    // load AWS configuration using the custom HTTP client
+    cfg, err := config.LoadDefaultConfig(
+        context.Background(),
+        config.WithHTTPClient(httpClient),
+    )
+    if err != nil {
+        log.Fatalf("loading AWS config: %v", err)
+    }
+
+    // create DynamoDB client
+    ddb = dynamodb.NewFromConfig(cfg)
+}
+
+/* ─────────── Handler ─────────── */
+
+func handler(ctx context.Context, _ connectEvent) (connectResp, error) {
+    // Fetch the row from DynamoDB
+    out, err := ddb.GetItem(ctx, &dynamodb.GetItemInput{
+        TableName: aws.String(tableName),
+        Key: map[string]types.AttributeValue{
+            "entityId": &types.AttributeValueMemberS{Value: entityID},
+        },
+    })
+    if err != nil {
+        log.Errorw("dynamodb get failed", "error", err)
+        return connectResp{IsOpen: false, Msg: "dynamodb error"}, nil
+    }
+    if out.Item == nil {
+        log.Infow("entityId not found", "entityId", entityID)
+        return connectResp{IsOpen: false, Msg: "no such entity"}, nil
+    }
+
+    // Unmarshal operatingHours and queueArn
+    var row struct {
+        QueueArn       string `dynamodbav:"queueArn"`
+        OperatingHours map[string]struct {
+            OpenTime  string `dynamodbav:"openTime"`
+            CloseTime string `dynamodbav:"closeTime"`
+        } `dynamodbav:"operatingHours"`
+    }
+    if err := attributevalue.UnmarshalMap(out.Item, &row); err != nil {
+        log.Errorw("unmarshal failed", "error", err)
+        return connectResp{IsOpen: false, Msg: "unmarshal error"}, nil
+    }
+
+    // Determine "now" (or use FORCE_TIME for testing)
+    now := time.Now().UTC().In(centralTZ)
+    if ts := os.Getenv("FORCE_TIME"); ts != "" {
+        if t, err := time.ParseInLocation(time.RFC3339, ts, centralTZ); err == nil {
+            now = t
+        } else {
+            log.Warnw("bad FORCE_TIME value", "error", err)
+        }
+    }
+    day := now.Weekday().String()
+
+    // Check if office is closed today
+    today, ok := row.OperatingHours[day]
+    if !ok || (today.OpenTime == "00:00" && today.CloseTime == "00:00") {
+        return connectResp{IsOpen: false}, nil
+    }
+
+    // Parse open/close times
+    openT, err1 := time.ParseInLocation("15:04", today.OpenTime, centralTZ)
+    closeT, err2 := time.ParseInLocation("15:04", today.CloseTime, centralTZ)
+    if err1 != nil || err2 != nil {
+        log.Errorw("bad time format", "open", today.OpenTime, "close", today.CloseTime)
+        return connectResp{IsOpen: false, Msg: "bad time format"}, nil
+    }
+    openT = time.Date(now.Year(), now.Month(), now.Day(), openT.Hour(), openT.Minute(), 0, 0, centralTZ)
+    closeT = time.Date(now.Year(), now.Month(), now.Day(), closeT.Hour(), closeT.Minute(), 0, 0, centralTZ)
+
+    isOpen := !now.Before(openT) && now.Before(closeT)
+
+    // Build response
+    if !isOpen {
+        return connectResp{IsOpen: false}, nil
+    }
+    if row.QueueArn == "" {
+        log.Warnw("row has no queueArn", "entityId", entityID)
+        return connectResp{IsOpen: false, Msg: "no queueArn configured"}, nil
+    }
+    return connectResp{IsOpen: true, Queue: row.QueueArn}, nil
+}
+
+/* ─────────── Helpers for local testing ─────────── */
+
+func (r connectResp) String() string {
+    b, _ := json.MarshalIndent(r, "", "  ")
+    return string(b)
+}
+
+func runLocal() {
+    var ev connectEvent
+    _ = json.NewDecoder(bufio.NewReader(os.Stdin)).Decode(&ev)
+    resp, err := handler(context.Background(), ev)
+    if err != nil {
+        log.Fatalf("handler err: %v", err)
+    }
+    fmt.Println(resp.String())
+}
+
+/* ─────────── main() ─────────── */
+
+func main() {
+    if os.Getenv("LOCAL_TEST") == "true" {
+        runLocal()
+        return
+    }
+    lambda.Start(handler)
+}
+
+
+// httpclient/httpclient.go
+package httpclient
+
+import (
+    "crypto/tls"
+    "crypto/x509"
+    "errors"
+    "net/http"
+    "os"
+    "time"
+)
+
+// New creates an *http.Client whose TLS root-CA pool
+// includes both the system certificates and the PEM bundle
+// at CA_CERT_FILE. It also sets a sensible default timeout.
+// Returns an error if the file can’t be read or parsed.
+func New() (*http.Client, error) {
+    certPath := os.Getenv("CA_CERT_FILE")
+    if certPath == "" {
+        return nil, errors.New("CA_CERT_FILE environment variable is not set")
+    }
+
+    // Load your custom PEM bundle
+    pemBytes, err := os.ReadFile(certPath)
+    if err != nil {
+        return nil, err
+    }
+
+    // Start from the system roots, if available
+    pool, err := x509.SystemCertPool()
+    if err != nil {
+        pool = x509.NewCertPool()
+    }
+
+    if !pool.AppendCertsFromPEM(pemBytes) {
+        return nil, errors.New("failed to append PEM certificates")
+    }
+
+    // Clone the default transport (to inherit timeouts, proxies, etc.)
+    tr := http.DefaultTransport.(*http.Transport).Clone()
+    tr.TLSClientConfig = &tls.Config{
+        RootCAs: pool,
+    }
+
+    // Return an HTTP client with a 30s timeout
+    return &http.Client{
+        Transport: tr,
+        Timeout:   30 * time.Second,
+    }, nil
+}
