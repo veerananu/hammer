@@ -1,0 +1,45 @@
+
+func init() {
+	// 1) structured logging
+	zl, err := zap.NewProduction()
+	if err != nil {
+		panic(err)
+	}
+	log = zl.Sugar()
+
+	// 2) load CA bundle from environment
+	caPath := os.Getenv("AWS_CA_BUNDLE")
+	if caPath == "" {
+		log.Fatal("AWS_CA_BUNDLE must point to your PEM file")
+	}
+	pemBytes, err := ioutil.ReadFile(caPath)
+	if err != nil {
+		log.Fatalf("unable to read CA bundle at %s: %v", caPath, err)
+	}
+	rootCAs := x509.NewCertPool()
+	if ok := rootCAs.AppendCertsFromPEM(pemBytes); !ok {
+		log.Fatal("failed to parse any PEM certificates from AWS_CA_BUNDLE")
+	}
+
+	// 3) custom HTTP client with your CA pool
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{RootCAs: rootCAs},
+		},
+	}
+
+	// 4) load AWS SDK config using that HTTP client
+	awsCfg, err := config.LoadDefaultConfig(
+		context.Background(),
+		config.WithHTTPClient(httpClient),
+	)
+	if err != nil {
+		log.Fatalf("unable to load AWS SDK config: %v", err)
+	}
+
+	// 5) inject into your shared configclient
+	configclient.SetCustomConfig(&awsCfg)
+
+	// 6) now your dynamodbclient will pick it up
+	ddb = dynamodbclient.GetDynamoClient()
+}
