@@ -1,0 +1,48 @@
+what changes you made
+
+
+ChatGPT said:
+Here’s exactly what differs in that minimal snippet from your earlier attempts:
+
+Aliased the AWS SDK’s config import so it can’t be confused with your configclient package:
+
+go
+Copy
+Edit
+import sdkconfig "github.com/aws/aws-sdk-go-v2/config"
+Dropped any use of a non-existent WithTransportOptions. Instead we use the real, supported option:
+
+go
+Copy
+Edit
+sdkconfig.WithHTTPClient(httpClient)
+Read your CA bundle from AWS_CA_BUNDLE into a *x509.CertPool, then built an http.Client whose transport uses that pool:
+
+go
+Copy
+Edit
+pem, _ := ioutil.ReadFile(caPath)
+pool := x509.NewCertPool()
+pool.AppendCertsFromPEM(pem)
+
+httpClient := &http.Client{
+  Transport: &http.Transport{
+    TLSClientConfig: &tls.Config{RootCAs: pool},
+  },
+}
+Loaded the SDK config with that HTTP client so all AWS calls use your corporate roots:
+
+go
+Copy
+Edit
+awsCfg, err := sdkconfig.LoadDefaultConfig(
+  context.Background(),
+  sdkconfig.WithHTTPClient(httpClient),
+)
+Injected that awsCfg into your shared configclient:
+
+go
+Copy
+Edit
+configclient.SetCustomConfig(&awsCfg)
+By making those five changes—and especially by using only WithHTTPClient—you eliminate the “no WithTransportOptions” compile error and ensure the SDK actually trusts your custom CA bundle.
