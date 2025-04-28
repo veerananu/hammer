@@ -1,0 +1,118 @@
+// cmd/item/main_test.go
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+)
+
+func TestHandler_MethodNotAllowed(t *testing.T) {
+	resp, _ := handler(context.Background(), events.APIGatewayProxyRequest{
+		HTTPMethod: "DELETE",
+	})
+	if resp.StatusCode != 405 {
+		t.Errorf("expected status 405, got %d", resp.StatusCode)
+	}
+	var body apiResp
+	if err := json.Unmarshal([]byte(resp.Body), &body); err != nil {
+		t.Fatalf("failed to unmarshal body: %v", err)
+	}
+	if body.Message != "method not allowed" {
+		t.Errorf("expected message 'method not allowed', got %q", body.Message)
+	}
+}
+
+func TestHandler_GetMissingEntityID(t *testing.T) {
+	resp, _ := handler(context.Background(), events.APIGatewayProxyRequest{
+		HTTPMethod:            "GET",
+		QueryStringParameters: map[string]string{},
+	})
+	if resp.StatusCode != 400 {
+		t.Errorf("expected status 400, got %d", resp.StatusCode)
+	}
+	var body apiResp
+	if err := json.Unmarshal([]byte(resp.Body), &body); err != nil {
+		t.Fatalf("failed to unmarshal body: %v", err)
+	}
+	if body.Message != "entityId query parameter required" {
+		t.Errorf("unexpected message: %q", body.Message)
+	}
+}
+
+func TestHandler_InvalidJSON(t *testing.T) {
+	resp, _ := handler(context.Background(), events.APIGatewayProxyRequest{
+		HTTPMethod: "POST",
+		Body:       "{invalid",
+	})
+	if resp.StatusCode != 400 {
+		t.Errorf("expected status 400, got %d", resp.StatusCode)
+	}
+	var body apiResp
+	if err := json.Unmarshal([]byte(resp.Body), &body); err != nil {
+		t.Fatalf("failed to unmarshal body: %v", err)
+	}
+	if !strings.HasPrefix(body.Message, "invalid JSON:") {
+		t.Errorf("unexpected message: %q", body.Message)
+	}
+}
+
+func TestValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   req
+		wantErr bool
+		errMsg  string
+	}{
+		{"missing entity", req{}, true, "entityId is required"},
+		{"no fields", req{EntityID: "x"}, true, "either hours or queueArn must be provided"},
+		{"invalid time", req{
+			EntityID: "x",
+			Hours:    map[string]oneDay{"Mon": {OpenTime: "25:00", CloseTime: "10:00"}},
+		}, true, "Mon times must be HH:MM"},
+		{"open after close", req{
+			EntityID: "x",
+			Hours:    map[string]oneDay{"Mon": {OpenTime: "10:00", CloseTime: "09:00"}},
+		}, true, "Mon openTime must be before closeTime"},
+		{"valid queue", req{
+			EntityID: "x",
+			QueueArn: "arn:aws:sqs:us-east-1:123456789012:my-queue",
+		}, false, ""},
+		{"valid hours", req{
+			EntityID: "x",
+			Hours:    map[string]oneDay{"Mon": {OpenTime: "08:00", CloseTime: "17:00"}},
+		}, false, ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validate(tc.input)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if !strings.Contains(err.Error(), tc.errMsg) {
+					t.Errorf("expected error containing %q, got %v", tc.errMsg, err)
+				}
+			} else if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestMakeTimeMap(t *testing.T) {
+	m := makeTimeMap("08:00", "18:00")
+	want := map[string]types.AttributeValue{
+		"openTime":  &types.AttributeValueMemberS{Value: "08:00"},
+		"closeTime": &types.AttributeValueMemberS{Value: "18:00"},
+	}
+	if !reflect.DeepEqual(m.Value, want) {
+		t.Errorf("makeTimeMap() = %v, want %v", m.Value, want)
+	}
+}
