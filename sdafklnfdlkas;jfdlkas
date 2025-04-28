@@ -1,0 +1,1 @@
+aws apigateway get-export --rest-api-id r9y2lqnac2 --stage-name prod --export-type swagger --parameters extensions='apigateway' --accepts application/json --region us-west-2 swagger-export.json
