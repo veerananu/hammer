@@ -1,0 +1,234 @@
+package main
+
+import (
+    "context"
+    "encoding/json"
+    "testing"
+
+    "github.com/aws/aws-lambda-go/events"
+    "github.com/aws/aws-sdk-go-v2/service/dynamodb"
+    "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+    "github.com/stretchr/testify/assert"
+)
+
+// Define structs for request and response
+type req struct {
+    EntityID string            `json:"entityId"`
+    Hours    map[string]oneDay `json:"hours"`
+    QueueArn string            `json:"queueArn"`
+}
+
+type oneDay struct {
+    OpenTime  string `json:"openTime"`
+    CloseTime string `json:"closeTime"`
+}
+
+type apiResp struct {
+    Message   string            `json:"message"`
+    QueueArn  string            `json:"queueArn,omitempty"`
+    Hours     map[string]oneDay `json:"hours,omitempty"`
+}
+
+func TestHandleGetExisting(t *testing.T) {
+    originalDdb := ddb
+    defer func() { ddb = originalDdb }()
+
+    mockDdb := &MockDynamoDB{
+        GetItemFunc: func(ctx context.Context, params *dynamodb.GetItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error) {
+            if *params.TableName == tableName && params.Key["entityId"].(*types.AttributeValueMemberS).Value == "test-id" {
+                item := map[string]types.AttributeValue{
+                    "entityId": &types.AttributeValueMemberS{Value: "test-id"},
+                    "queueArn": &types.AttributeValueMemberS{Value: "arn:aws:sqs:region:account:queue"},
+                    "operatingHours": &types.AttributeValueMemberM{
+                        Value: map[string]types.AttributeValue{
+                            "monday": &types.AttributeValueMemberM{
+                                Value: map[string]types.AttributeValue{
+                                    "openTime":  &types.AttributeValueMemberS{Value: "09:00"},
+                                    "closeTime": &types.AttributeValueMemberS{Value: "17:00"},
+                                },
+                            },
+                        },
+                    },
+                }
+                return &dynamodb.GetItemOutput{Item: item}, nil
+            }
+            return &dynamodb.GetItemOutput{}, nil
+        },
+    }
+    ddb = mockDdb
+
+    ev := events.APIGatewayProxyRequest{
+        HTTPMethod:            "GET",
+        QueryStringParameters: map[string]string{"entityId": "test-id"},
+    }
+
+    resp, err := handler(context.Background(), ev)
+    assert.NoError(t, err)
+    assert.Equal(t, 200, resp.StatusCode)
+
+    var apiResp apiResp
+    err = json.Unmarshal([]byte(resp.Body), &apiResp)
+    assert.NoError(t, err)
+    assert.Equal(t, "arn:aws:sqs:region:account:queue", apiResp.QueueArn)
+    assert.Len(t, apiResp.Hours, 1)
+    assert.Equal(t, "09:00", apiResp.Hours["monday"].OpenTime)
+    assert.Equal(t, "17:00", apiResp.Hours["monday"].CloseTime)
+}
+
+func TestHandleGetNotFound(t *testing.T) {
+    originalDdb := ddb
+    defer func() { ddb = originalDdb }()
+
+    mockDdb := &MockDynamoDB{
+        GetItemFunc: func(ctx context.Context, params *dynamodb.GetItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error) {
+            return &dynamodb.GetItemOutput{}, nil // Item not found
+        },
+    }
+    ddb = mockDdb
+
+    ev := events.APIGatewayProxyRequest{
+        HTTPMethod:            "GET",
+        QueryStringParameters: map[string]string{"entityId": "non-existing"},
+    }
+
+    resp, err := handler(context.Background(), ev)
+    assert.NoError(t, err)
+    assert.Equal(t, 404, resp.StatusCode)
+
+    var apiResp apiResp
+    err = json.Unmarshal([]byte(resp.Body), &apiResp)
+    assert.NoError(t, err)
+    assert.Equal(t, "not found", apiResp.Message)
+}
+
+func TestHandleGetMissingEntityId(t *testing.T) {
+    ev := events.APIGatewayProxyRequest{
+        HTTPMethod:            "GET",
+        QueryStringParameters: map[string]string{},
+    }
+
+    resp, err := handler(context.Background(), ev)
+    assert.NoError(t, err)
+    assert.Equal(t, 400, resp.StatusCode)
+
+    var apiResp apiResp
+    err = json.Unmarshal([]byte(resp.Body), &apiResp)
+    assert.NoError(t, err)
+    assert.Equal(t, "entityId query parameter required", apiResp.Message)
+}
+
+func TestHandleUpdateValid(t *testing.T) {
+    originalDdb := ddb
+    defer func() { ddb = originalDdb }()
+
+    var capturedInput *dynamodb.UpdateItemInput
+    mockDdb := &MockDynamoDB{
+        UpdateItemFunc: func(ctx context.Context, params *dynamodb.UpdateItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error) {
+            capturedInput = params
+            return &dynamodb.UpdateItemOutput{}, nil
+        },
+    }
+    ddb = mockDdb
+
+    body := req{
+        EntityID: "test-id",
+        Hours:    map[string]oneDay{"monday": {OpenTime: "10:00", CloseTime: "18:00"}},
+        QueueArn: "arn:aws:sqs:region:account:new-queue",
+    }
+    bodyBytes, _ := json.Marshal(body)
+    ev := events.APIGatewayProxyRequest{
+        HTTPMethod: "POST",
+        Body:       string(bodyBytes),
+    }
+
+    resp, err := handler(context.Background(), ev)
+    assert.NoError(t, err)
+    assert.Equal(t, 200, resp.StatusCode)
+
+    var apiResp apiResp
+    err = json.Unmarshal([]byte(resp.Body), &apiResp)
+    assert.NoError(t, err)
+    assert.Equal(t, "updated 2 field(s) for test-id", apiResp.Message)
+
+    assert.NotNil(t, capturedInput)
+    assert.Equal(t, tableName, *capturedInput.TableName)
+    assert.Equal(t, "test-id", capturedInput.Key["entityId"].(*types.AttributeValueMemberS).Value)
+}
+
+func TestHandleUpdateInvalidJson(t *testing.T) {
+    ev := events.APIGatewayProxyRequest{
+        HTTPMethod: "POST",
+        Body:       `{"entityId": "test-id", "hours": {"monday": {"openTime": "10:00", "closeTime": "18:00"}}`, // Invalid JSON
+    }
+
+    resp, err := handler(context.Background(), ev)
+    assert.NoError(t, err)
+    assert.Equal(t, 400, resp.StatusCode)
+
+    var apiResp apiResp
+    err = json.Unmarshal([]byte(resp.Body), &apiResp)
+    assert.NoError(t, err)
+    assert.Contains(t, apiResp.Message, "invalid JSON")
+}
+
+func TestHandleUpdateMissingEntityId(t *testing.T) {
+    body := req{
+        Hours:    map[string]oneDay{"monday": {OpenTime: "10:00", CloseTime: "18:00"}},
+        QueueArn: "arn:aws:sqs:region:account:new-queue",
+    }
+    bodyBytes, _ := json.Marshal(body)
+    ev := events.APIGatewayProxyRequest{
+        HTTPMethod: "POST",
+        Body:       string(bodyBytes),
+    }
+
+    resp, err := handler(context.Background(), ev)
+    assert.NoError(t, err)
+    assert.Equal(t, 400, resp.StatusCode)
+
+    var apiResp apiResp
+    err = json.Unmarshal([]byte(resp.Body), &apiResp)
+    assert.NoError(t, err)
+    assert.Equal(t, "entityId is required", apiResp.Message)
+}
+
+func TestHandleUpdateInvalidTime(t *testing.T) {
+    body := req{
+        EntityID: "test-id",
+        Hours:    map[string]oneDay{"monday": {OpenTime: "25:00", CloseTime: "18:00"}},
+    }
+    bodyBytes, _ := json.Marshal(body)
+    ev := events.APIGatewayProxyRequest{
+        HTTPMethod: "POST",
+        Body:       string(bodyBytes),
+    }
+
+    resp, err := handler(context.Background(), ev)
+    assert.NoError(t, err)
+    assert.Equal(t, 400, resp.StatusCode)
+
+    var apiResp apiResp
+    err = json.Unmarshal([]byte(resp.Body), &apiResp)
+    assert.NoError(t, err)
+    assert.Contains(t, apiResp.Message, "monday times must be HH:MM (24h)")
+}
+
+func TestHandleUpdateNeitherProvided(t *testing.T) {
+    body := req{
+        EntityID: "test-id",
+    }
+    bodyBytes, _ := json.Marshal(body)
+    ev := events.APIGatewayProxyRequest{
+        HTTPMethod: "POST",
+        Body:       string(bodyBytes),
+    }
+
+    resp, err := handler(context.Background(), ev)
+    assert.NoError(t, err)
+    assert.Equal(t, 400, resp.StatusCode)
+
+    var apiResp apiResp
+    err = json.Unmarshal([]byte(resp.Body), &apiResp)
+    assert.NoError(t, err)
+    assert.Equal(t, "either hours or queueArn must be provided", apiResp.Message)
+}
