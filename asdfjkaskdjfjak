@@ -1,0 +1,216 @@
+{
+  "swagger" : "2.0",
+  "info" : {
+    "version" : "1.0.0",
+    "title" : "Entity Hours and Queue API"
+  },
+  "host" : "r9y2lqnac2.execute-api.us-west-2.amazonaws.com",
+  "basePath" : "/prod",
+  "schemes" : [ "https" ],
+  "paths" : {
+    "/entity" : {
+      "get" : {
+        "produces" : [ "application/json" ],
+        "parameters" : [ {
+          "name" : "entityId",
+          "in" : "query",
+          "required" : true,
+          "type" : "string"
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "200 response",
+            "schema" : {
+              "$ref" : "#/definitions/ApiResponse"
+            }
+          },
+          "400" : {
+            "description" : "400 response",
+            "schema" : {
+              "$ref" : "#/definitions/ApiResponse"
+            }
+          },
+          "500" : {
+            "description" : "500 response",
+            "schema" : {
+              "$ref" : "#/definitions/ApiResponse"
+            }
+          },
+          "404" : {
+            "description" : "404 response",
+            "schema" : {
+              "$ref" : "#/definitions/ApiResponse"
+            }
+          }
+        },
+        "x-amazon-apigateway-integration" : {
+          "httpMethod" : "POST",
+          "uri" : "arn:aws:apigateway:us-west-2:lambda:path/2015-03-31/functions/arn:aws:lambda:us-west-2:084828565119:function:qwe/invocations",
+          "responses" : {
+            "default" : {
+              "statusCode" : "200"
+            }
+          },
+          "passthroughBehavior" : "when_no_match",
+          "timeoutInMillis" : 29000,
+          "contentHandling" : "CONVERT_TO_TEXT",
+          "type" : "aws_proxy"
+        }
+      },
+      "post" : {
+        "consumes" : [ "application/json" ],
+        "produces" : [ "application/json" ],
+        "parameters" : [ {
+          "in" : "body",
+          "name" : "UpdateRequest",
+          "required" : true,
+          "schema" : {
+            "$ref" : "#/definitions/UpdateRequest"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "200 response",
+            "schema" : {
+              "$ref" : "#/definitions/ApiResponse"
+            }
+          },
+          "400" : {
+            "description" : "400 response",
+            "schema" : {
+              "$ref" : "#/definitions/ApiResponse"
+            }
+          },
+          "500" : {
+            "description" : "500 response",
+            "schema" : {
+              "$ref" : "#/definitions/ApiResponse"
+            }
+          }
+        },
+        "x-amazon-apigateway-integration" : {
+          "httpMethod" : "POST",
+          "uri" : "arn:aws:apigateway:us-west-2:lambda:path/2015-03-31/functions/arn:aws:lambda:us-west-2:084828565119:function:qwe/invocations",
+          "responses" : {
+            "default" : {
+              "statusCode" : "200"
+            }
+          },
+          "passthroughBehavior" : "when_no_match",
+          "timeoutInMillis" : 29000,
+          "contentHandling" : "CONVERT_TO_TEXT",
+          "type" : "aws_proxy"
+        }
+      },
+      "put" : {
+        "consumes" : [ "application/json" ],
+        "produces" : [ "application/json" ],
+        "parameters" : [ {
+          "in" : "body",
+          "name" : "UpdateRequest",
+          "required" : true,
+          "schema" : {
+            "$ref" : "#/definitions/UpdateRequest"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "200 response",
+            "schema" : {
+              "$ref" : "#/definitions/ApiResponse"
+            }
+          },
+          "400" : {
+            "description" : "400 response",
+            "schema" : {
+              "$ref" : "#/definitions/ApiResponse"
+            }
+          },
+          "500" : {
+            "description" : "500 response",
+            "schema" : {
+              "$ref" : "#/definitions/ApiResponse"
+            }
+          }
+        },
+        "x-amazon-apigateway-integration" : {
+          "httpMethod" : "POST",
+          "uri" : "arn:aws:apigateway:us-west-2:lambda:path/2015-03-31/functions/arn:aws:lambda:us-west-2:084828565119:function:qwe/invocations",
+          "responses" : {
+            "default" : {
+              "statusCode" : "200"
+            }
+          },
+          "passthroughBehavior" : "when_no_match",
+          "timeoutInMillis" : 29000,
+          "contentHandling" : "CONVERT_TO_TEXT",
+          "type" : "aws_proxy"
+        }
+      }
+    }
+  },
+  "definitions" : {
+    "UpdateRequest" : {
+      "type" : "object",
+      "required" : [ "entityId" ],
+      "properties" : {
+        "entityId" : {
+          "type" : "string",
+          "description" : "The unique identifier of the entity."
+        },
+        "hours" : {
+          "type" : "object",
+          "description" : "Operating hours for specific days, mapping day names (e.g., Monday, Tuesday) to opening and closing times.",
+          "additionalProperties" : {
+            "$ref" : "#/definitions/OneDayHours"
+          }
+        },
+        "queue" : {
+          "type" : "string",
+          "description" : "The current queue status (e.g., open, closed, busy).",
+          "maxLength" : 255
+        }
+      },
+      "description" : "Request body for updating entity data. 'entityId' is required, and at least one of 'hours' or 'queue' MUST be provided (enforced in the backend)."
+    },
+    "OneDayHours" : {
+      "type" : "object",
+      "required" : [ "closeTime", "openTime" ],
+      "properties" : {
+        "openTime" : {
+          "type" : "string",
+          "description" : "Opening time in HH:MM 24-hour format (e.g., 08:00, 14:30).",
+          "pattern" : "^[0-2]\\d:[0-5]\\d$"
+        },
+        "closeTime" : {
+          "type" : "string",
+          "description" : "Closing time in HH:MM 24-hour format (e.g., 17:00, 22:00). Must be after openTime.",
+          "pattern" : "^[0-2]\\d:[0-5]\\d$"
+        }
+      },
+      "description" : "Opening and closing times for a single day."
+    },
+    "ApiResponse" : {
+      "type" : "object",
+      "properties" : {
+        "message" : {
+          "type" : "string",
+          "description" : "A message providing status or error details. Typically used in error responses."
+        },
+        "hours" : {
+          "type" : "object",
+          "description" : "Operating hours for specific days, mapping day names (e.g., Monday, Tuesday) to opening and closing times. Only included in successful GET responses.",
+          "additionalProperties" : {
+            "$ref" : "#/definitions/OneDayHours"
+          }
+        },
+        "queue" : {
+          "type" : "string",
+          "description" : "The current queue status (e.g., open, closed, busy). Only included in successful GET responses.",
+          "maxLength" : 255
+        }
+      },
+      "description" : "Standard API response format for success and error messages, potentially including entity data for GET requests."
+    }
+  }
+}
