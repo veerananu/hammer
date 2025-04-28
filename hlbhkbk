@@ -1,0 +1,12 @@
+{
+  "entityId": "CMK",
+  "hours": {
+    "Monday":    { "openTime": "00:00", "closeTime": "23:59" },
+    "Tuesday":   { "openTime": "00:00", "closeTime": "23:59" },
+    "Wednesday": { "openTime": "00:00", "closeTime": "23:59" },
+    "Thursday":  { "openTime": "00:00", "closeTime": "23:59" },
+    "Friday":    { "openTime": "00:00", "closeTime": "23:59" },
+    "Saturday":  { "openTime": "00:00", "closeTime": "23:59" },
+    "Sunday":    { "openTime": "00:00", "closeTime": "23:59" }
+  }
+}
