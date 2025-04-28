@@ -1,0 +1,205 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "version": "1.0.0",
+    "title": "Entity Hours and Queue API",
+    "description": "API for managing entity operating hours and queue status."
+  },
+  "host": "your-api-gateway-id.execute-api.your-region.amazonaws.com",
+  "basePath": "/",
+  "schemes": ["https"],
+  "consumes": ["application/json"],
+  "produces": ["application/json"],
+  "securityDefinitions": {
+    "api_key": {
+      "type": "apiKey",
+      "name": "x-api-key",
+      "in": "header",
+      "description": "API key required for authentication."
+    }
+  },
+  "paths": {
+    "/entity": {
+      "get": {
+        "summary": "Get entity operating hours and queue status",
+        "description": "Retrieves the operating hours and current queue status for a given entity based on its unique identifier.",
+        "parameters": [
+          {
+            "name": "entityId",
+            "in": "query",
+            "description": "Unique identifier of the entity (cannot be empty).",
+            "required": true,
+            "type": "string",
+            "minLength": 1
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Entity data retrieved successfully",
+            "schema": { "$ref": "#/definitions/ApiResponse" }
+          },
+          "400": {
+            "description": "Bad request (e.g., missing or invalid entityId)",
+            "schema": { "$ref": "#/definitions/ErrorResponse" }
+          },
+          "404": {
+            "description": "Entity not found",
+            "schema": { "$ref": "#/definitions/ErrorResponse" }
+          },
+          "500": {
+            "description": "Internal server error",
+            "schema": { "$ref": "#/definitions/ErrorResponse" }
+          }
+        },
+        "security": [{ "api_key": [] }],
+        "x-amazon-apigateway-integration": {
+          "type": "AWS_PROXY",
+          "httpMethod": "POST",
+          "uri": "arn:aws:apigateway:your-region:lambda:path/2015-03-31/functions/your-lambda-function-arn/invocations"
+        }
+      },
+      "post": {
+        "summary": "Update entity operating hours and/or queue status",
+        "description": "Updates the operating hours or queue status for an entity. At least one of 'hours' or 'queue' must be provided (enforced in the backend).",
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "description": "Data to update the entity",
+            "required": true,
+            "schema": { "$ref": "#/definitions/UpdateRequest" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Entity data updated successfully",
+            "schema": { "$ref": "#/definitions/ApiResponse" }
+          },
+          "400": {
+            "description": "Bad request (e.g., invalid JSON or missing required fields)",
+            "schema": { "$ref": "#/definitions/ErrorResponse" }
+          },
+          "500": {
+            "description": "Internal server error",
+            "schema": { "$ref": "#/definitions/ErrorResponse" }
+          }
+        },
+        "security": [{ "api_key": [] }],
+        "x-amazon-apigateway-integration": {
+          "type": "AWS_PROXY",
+          "httpMethod": "POST",
+          "uri": "arn:aws:apigateway:your-region:lambda:path/2015-03-31/functions/your-lambda-function-arn/invocations"
+        }
+      },
+      "put": {
+        "summary": "Update entity operating hours and/or queue status (alternative)",
+        "description": "Same as POST: Updates operating hours or queue status. At least one of 'hours' or 'queue' must be provided (enforced in the backend).",
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "description": "Data to update the entity",
+            "required": true,
+            "schema": { "$ref": "#/definitions/UpdateRequest" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Entity data updated successfully",
+            "schema": { "$ref": "#/definitions/ApiResponse" }
+          },
+          "400": {
+            "description": "Bad request (e.g., invalid JSON or missing required fields)",
+            "schema": { "$ref": "#/definitions/ErrorResponse" }
+          },
+          "500": {
+            "description": "Internal server error",
+            "schema": { "$ref": "#/definitions/ErrorResponse" }
+          }
+        },
+        "security": [{ "api_key": [] }],
+        "x-amazon-apigateway-integration": {
+          "type": "AWS_PROXY",
+          "httpMethod": "POST",
+          "uri": "arn:aws:apigateway:your-region:lambda:path/2015-03-31/functions/your-lambda-function-arn/invocations"
+        }
+      }
+    }
+  },
+  "definitions": {
+    "UpdateRequest": {
+      "type": "object",
+      "required": ["entityId"],
+      "properties": {
+        "entityId": {
+          "type": "string",
+          "description": "Unique identifier of the entity."
+        },
+        "hours": {
+          "type": "object",
+          "description": "Operating hours mapping day names (e.g., Monday) to times.",
+          "additionalProperties": { "$ref": "#/definitions/OneDayHours" }
+        },
+        "queue": {
+          "type": "string",
+          "description": "Current queue status (e.g., open, closed, busy).",
+          "maxLength": 255
+        }
+      },
+      "example": {
+        "entityId": "12345",
+        "hours": {
+          "Monday": { "openTime": "09:00", "closeTime": "17:00" }
+        },
+        "queue": "open"
+      }
+    },
+    "OneDayHours": {
+      "type": "object",
+      "required": ["openTime", "closeTime"],
+      "properties": {
+        "openTime": {
+          "type": "string",
+          "description": "Opening time (HH:MM, 24-hour, e.g., 08:00).",
+          "pattern": "^[0-2]\\d:[0-5]\\d$"
+        },
+        "closeTime": {
+          "type": "string",
+          "description": "Closing time (HH:MM, 24-hour, e.g., 17:00).",
+          "pattern": "^[0-2]\\d:[0-5]\\d$"
+        }
+      }
+    },
+    "ApiResponse": {
+      "type": "object",
+      "properties": {
+        "hours": {
+          "type": "object",
+          "description": "Operating hours by day.",
+          "additionalProperties": { "$ref": "#/definitions/OneDayHours" }
+        },
+        "queue": {
+          "type": "string",
+          "description": "Current queue status.",
+          "maxLength": 255
+        }
+      },
+      "example": {
+        "hours": {
+          "Monday": { "openTime": "09:00", "closeTime": "17:00" }
+        },
+        "queue": "open"
+      }
+    },
+    "ErrorResponse": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "description": "Details about the error."
+        }
+      },
+      "example": { "message": "Invalid entityId provided." }
+    }
+  }
+}
