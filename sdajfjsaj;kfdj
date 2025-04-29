@@ -1,0 +1,49 @@
+variable "bank_fraud_queue_arn" {
+  description = "ARN of the Amazon Connect queue used when CMK is open"
+  type        = string
+  default = "arn:aws:connect:us-west-2:084828565119:instance/ad7288bd-ae6a-4e51-bb44-1184c6572cf3/queue/9b29e5-71ec-45a8-be0a-dc4d917dd552"
+}
+variable "bank_credit_queue_arn" {
+  description = "ARN of the Amazon Connect queue used when CMK is open"
+  type        = string
+  default = "arn:aws:connect:us-west-2:084828565119:instance/ad7288bd-ae6a-4e51-bb44-1184c6572cf3/queue/9b29e5-71ec-45a8-be0a-dc4d917dd552"
+}
+variable "bank_debit_queue_arn" {
+  description = "ARN of the Amazon Connect queue used when CMK is open"
+  type        = string
+  default = "arn:aws:connect:us-west-2:084828565119:instance/ad7288bd-ae6a-4e51-bb44-1184c6572cf3/queue/9b29e5-71ec-45a8-be0a-dc4d917dd552"
+}
+
+variable "bank_credit_increase_queue_arn" {
+  description = "ARN of the Amazon Connect queue used when CMK is open"
+  type        = string
+  default = "arn:aws:connect:us-west-2:084828565119:instance/ad7288bd-ae6a-4e51-bb44-1184c65723/queue/917b29e5-71ec-45a8-be0a-dc4d917dd552"
+}
+
+
+
+
+variable "insurance_roadside_queue_arn" {
+  description = "ARN of the Amazon Connect queue used when CMK is open"
+  type        = string
+  default = "arn:aws:connect:us-west-2:084828565119:instance/ad7288-ae6a-4e51-bb44-1184c6572cf3/queue/917b29e5-71ec-45a8-be0a-dc4d917dd552"
+}
+
+
+variable "insurance_policy_inquiry_queue_arn" {
+  description = "ARN of the Amazon Connect queue used when CMK is open"
+  type        = string
+  default = "arn:aws:connect:us-west-2:084828565119:instance/ad7288-ae6a-4e51-bb44-1184c6572cf3/queue/917b29e5-71ec-45a8-be0a-dc4d917dd552"
+}
+
+variable "insurance_underwriting_queue_arn" {
+  description = "ARN of the Amazon Connect queue used when CMK is open"
+  type        = string
+  default = "arn:aws:connect:us-west-2:084828565119:instance/ad7288-ae6a-4e51-bb44-1184c6572cf3/queue/917b29e5-71ec-45a8-be0a-dc4d917dd552"
+}
+
+variable "insurance_claims_status_queue_arn" {
+  description = "ARN of the Amazon Connect queue used when CMK is open"
+  type        = string
+  default = "arn:aws:connect:us-west-2:084828565119:instance/ad7288-ae6a-4e51-bb44-1184c6572cf3/queue/917b29e5-71ec-45a8-be0a-dc4d917dd552"
+}
