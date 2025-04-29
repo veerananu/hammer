@@ -1,0 +1,151 @@
+package main
+
+import (
+	"context"
+	"os"
+	"time"
+
+	"github.com/aws/aws-lambda-go/lambda"
+	"go.uber.org/zap"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+)
+
+// ─────── Request / Response ───────
+
+type connectEvent struct {
+	Lob     string `json:"lob"`     // e.g. "Bank" or "Insurance"
+	Service string `json:"service"` // e.g. "credit"
+}
+
+type connectResp struct {
+	IsOpen bool   `json:"isOpen"`
+	Queue  string `json:"queue,omitempty"`
+	Msg    string `json:"msg,omitempty"`
+}
+
+// ─────────── Globals ───────────
+
+var (
+	ddb       *dynamodb.Client
+	tableName = os.Getenv("TABLE_NAME") // e.g. "OperatingHours"
+	centralTZ = time.FixedZone("CST", -6*60*60)
+	log       *zap.SugaredLogger
+)
+
+// ─────────── init() ───────────
+
+func init() {
+	// set up logger
+	zl, err := zap.NewProduction()
+	if err != nil {
+		panic(err)
+	}
+	log = zl.Sugar()
+
+	// load AWS config + create DynamoDB client
+	cfg, err := config.LoadDefaultConfig(context.Background())
+	if err != nil {
+		log.Fatalf("load AWS cfg: %v", err)
+	}
+	ddb = dynamodb.NewFromConfig(cfg)
+
+	// fallback default table name
+	if tableName == "" {
+		tableName = "OperatingHours"
+	}
+}
+
+// ─────────── Handler ───────────
+
+func handler(ctx context.Context, ev connectEvent) (connectResp, error) {
+	if ev.Lob == "" || ev.Service == "" {
+		return connectResp{
+			IsOpen: false,
+			Msg:    "lob and service are required",
+		}, nil
+	}
+
+	// 1) Fetch the item for this lob
+	out, err := ddb.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]types.AttributeValue{
+			"lob": &types.AttributeValueMemberS{Value: ev.Lob},
+		},
+	})
+	if err != nil {
+		log.Errorw("dynamodb GetItem failed", "error", err)
+		return connectResp{IsOpen: false, Msg: "dynamodb error"}, nil
+	}
+	if out.Item == nil {
+		return connectResp{IsOpen: false, Msg: "no such lob"}, nil
+	}
+
+	// 2) Unmarshal services map
+	var row struct {
+		Services map[string]struct {
+			QueueArn       string `dynamodbav:"queueArn"`
+			OperatingHours map[string]struct {
+				OpenTime  string `dynamodbav:"openTime"`
+				CloseTime string `dynamodbav:"closeTime"`
+			} `dynamodbav:"operatingHours"`
+		} `dynamodbav:"services"`
+	}
+	if err := attributevalue.UnmarshalMap(out.Item, &row); err != nil {
+		log.Errorw("unmarshal failed", "error", err)
+		return connectResp{IsOpen: false, Msg: "data unmarshal error"}, nil
+	}
+
+	// 3) Look up the requested service
+	svcMeta, ok := row.Services[ev.Service]
+	if !ok {
+		return connectResp{IsOpen: false, Msg: "unknown service"}, nil
+	}
+
+	// 4) Determine “today” in CST
+	now := time.Now().UTC().In(centralTZ)
+	day := now.Weekday().String() // e.g. "Monday"
+
+	// 5) See if hours exist & not all-zero
+	todayHrs, ok := svcMeta.OperatingHours[day]
+	if !ok || (todayHrs.OpenTime == "00:00" && todayHrs.CloseTime == "00:00") {
+		return connectResp{IsOpen: false}, nil
+	}
+
+	// 6) Parse open/close into full timestamps
+	openT, err1 := time.ParseInLocation("15:04", todayHrs.OpenTime, centralTZ)
+	closeT, err2 := time.ParseInLocation("15:04", todayHrs.CloseTime, centralTZ)
+	if err1 != nil || err2 != nil {
+		log.Errorw("bad time format", "open", todayHrs.OpenTime, "close", todayHrs.CloseTime)
+		return connectResp{IsOpen: false, Msg: "bad time format"}, nil
+	}
+	openT = time.Date(now.Year(), now.Month(), now.Day(), openT.Hour(), openT.Minute(), 0, 0, centralTZ)
+	closeT = time.Date(now.Year(), now.Month(), now.Day(), closeT.Hour(), closeT.Minute(), 0, 0, centralTZ)
+
+	// 7) Check if “now” is within [open, close)
+	isOpen := !now.Before(openT) && now.Before(closeT)
+	if !isOpen {
+		return connectResp{IsOpen: false}, nil
+	}
+
+	// 8) If open, queueArn must be set
+	if svcMeta.QueueArn == "" {
+		log.Warnw("no queueArn for open service", "lob", ev.Lob, "service", ev.Service)
+		return connectResp{IsOpen: false, Msg: "no queue configured"}, nil
+	}
+
+	return connectResp{
+		IsOpen: true,
+		Queue:  svcMeta.QueueArn,
+	}, nil
+}
+
+// ─────────── main() ───────────
+
+func main() {
+	lambda.Start(handler)
+}
