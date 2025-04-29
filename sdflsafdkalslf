@@ -1,0 +1,168 @@
+
+# Define the DynamoDB table with production-ready features
+# DynamoDB table definition
+resource "aws_dynamodb_table" "operating_hours" {
+  name         = "OperatingHours"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "lob"
+
+  attribute {
+    name = "lob"
+    type = "S"
+  }
+
+  server_side_encryption {
+    enabled = true
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  deletion_protection_enabled = true
+
+  tags = {
+    Environment = "Development"
+    Project     = "OperatingHours"
+  }
+}
+
+# Local variable for operating hours data
+locals {
+  operating_hours_data = {
+    # ──── BANK ────
+    "Bank" = {
+      services = {
+        credit = {
+          queueArn = var.bank_credit_queue_arn
+          hours = {
+            Monday    = { openTime = "08:00", closeTime = "18:00" }
+            Tuesday   = { openTime = "08:00", closeTime = "18:00" }
+            Wednesday = { openTime = "08:00", closeTime = "18:00" }
+            Thursday  = { openTime = "08:00", closeTime = "18:00" }
+            Friday    = { openTime = "08:00", closeTime = "18:00" }
+            Saturday  = { openTime = "09:00", closeTime = "13:00" }
+            Sunday    = { openTime = "00:00", closeTime = "00:00" }
+          }
+        }
+        debit = {
+          queueArn = var.bank_debit_queue_arn
+          hours = {
+            Monday    = { openTime = "07:00", closeTime = "19:00" }
+            Tuesday   = { openTime = "07:00", closeTime = "19:00" }
+            Wednesday = { openTime = "07:00", closeTime = "19:00" }
+            Thursday  = { openTime = "07:00", closeTime = "19:00" }
+            Friday    = { openTime = "07:00", closeTime = "19:00" }
+            Saturday  = { openTime = "08:00", closeTime = "14:00" }
+            Sunday    = { openTime = "00:00", closeTime = "00:00" }
+          }
+        }
+        creditIncrease = {
+          queueArn = var.bank_credit_increase_queue_arn
+          hours = {
+            Monday    = { openTime = "09:30", closeTime = "16:30" }
+            Tuesday   = { openTime = "09:30", closeTime = "16:30" }
+            Wednesday = { openTime = "09:30", closeTime = "16:30" }
+            Thursday  = { openTime = "09:30", closeTime = "16:30" }
+            Friday    = { openTime = "09:30", closeTime = "16:30" }
+            Saturday  = { openTime = "00:00", closeTime = "00:00" }
+            Sunday    = { openTime = "00:00", closeTime = "00:00" }
+          }
+        }
+        fraud = {
+          queueArn = var.bank_fraud_queue_arn
+          hours = {
+            Monday    = { openTime = "08:00", closeTime = "20:00" }
+            Tuesday   = { openTime = "08:00", closeTime = "20:00" }
+            Wednesday = { openTime = "08:00", closeTime = "20:00" }
+            Thursday  = { openTime = "08:00", closeTime = "20:00" }
+            Friday    = { openTime = "08:00", closeTime = "20:00" }
+            Saturday  = { openTime = "00:00", closeTime = "00:00" }
+            Sunday    = { openTime = "00:00", closeTime = "00:00" }
+          }
+        }
+      }
+    }
+
+    # ──── INSURANCE ────
+    "Insurance" = {
+      services = {
+        claimsStatus = {
+          queueArn = var.insurance_claims_status_queue_arn
+          hours = {
+            Monday    = { openTime = "08:00", closeTime = "17:00" }
+            Tuesday   = { openTime = "08:00", closeTime = "17:00" }
+            Wednesday = { openTime = "08:00", closeTime = "17:00" }
+            Thursday  = { openTime = "08:00", closeTime = "17:00" }
+            Friday    = { openTime = "08:00", closeTime = "17:00" }
+            Saturday  = { openTime = "10:00", closeTime = "14:00" }
+            Sunday    = { openTime = "00:00", closeTime = "00:00" }
+          }
+        }
+        underwriting = {
+          queueArn = var.insurance_underwriting_queue_arn
+          hours = {
+            Monday    = { openTime = "09:00", closeTime = "16:00" }
+            Tuesday   = { openTime = "09:00", closeTime = "16:00" }
+            Wednesday = { openTime = "09:00", closeTime = "16:00" }
+            Thursday  = { openTime = "09:00", closeTime = "16:00" }
+            Friday    = { openTime = "09:00", closeTime = "16:00" }
+            Saturday  = { openTime = "00:00", closeTime = "00:00" }
+            Sunday    = { openTime = "00:00", closeTime = "00:00" }
+          }
+        }
+        inquiry = {
+          queueArn = var.insurance_policy_inquiry_queue_arn
+          hours = {
+            Monday    = { openTime = "07:00", closeTime = "19:00" }
+            Tuesday   = { openTime = "07:00", closeTime = "19:00" }
+            Wednesday = { openTime = "07:00", closeTime = "19:00" }
+            Thursday  = { openTime = "07:00", closeTime = "19:00" }
+            Friday    = { openTime = "07:00", closeTime = "19:00" }
+            Saturday  = { openTime = "00:00", closeTime = "00:00" }
+            Sunday    = { openTime = "00:00", closeTime = "00:00" }
+          }
+        }
+        roadside = {
+          queueArn = var.insurance_roadside_queue_arn
+          hours = {
+            Monday    = { openTime = "00:00", closeTime = "23:59" }
+            Tuesday   = { openTime = "00:00", closeTime = "23:59" }
+            Wednesday = { openTime = "00:00", closeTime = "23:59" }
+            Thursday  = { openTime = "00:00", closeTime = "23:59" }
+            Friday    = { openTime = "00:00", closeTime = "23:59" }
+            Saturday  = { openTime = "00:00", closeTime = "23:59" }
+            Sunday    = { openTime = "00:00", closeTime = "23:59" }
+          }
+        }
+      }
+    }
+  }
+}
+
+#----------------------------------------
+# SEED ALL ITEMS INTO DYNAMODB
+#----------------------------------------
+resource "aws_dynamodb_table_item" "hours" {
+  for_each   = local.operating_hours_data
+  table_name = aws_dynamodb_table.operating_hours.name
+  hash_key   = aws_dynamodb_table.operating_hours.hash_key
+
+  item = jsonencode({
+    lob = { S = each.key }
+
+    services = { M = {
+      for svc, meta in each.value.services :
+      svc => { M = {
+        queueArn       = { S = meta.queueArn }
+        operatingHours = { M = {
+          for day, times in meta.hours :
+          day => { M = {
+            openTime  = { S = times.openTime }
+            closeTime = { S = times.closeTime }
+          }}
+        }}
+      }}
+    }}
+  })
+}
