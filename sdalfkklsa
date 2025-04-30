@@ -1,0 +1,16 @@
+{
+  "httpMethod": "GET",
+  "queryStringParameters": { "lob": "Bank", "service": "credit" }
+}
+Click Test and inspect the JSON response and logs.
+
+For a PUT, a body like:
+
+json
+Copy
+Edit
+{
+  "lob": "Bank",
+  "service": "credit",
+  "hours": { "Monday": { "openTime":"09:00","closeTime":"17:00" } }
+}
