@@ -1,0 +1,917 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "Entity Hours API",
+    "version": "1.0.0",
+    "description": "API for querying and updating operating hours and queue ARNs by line-of-business and service"
+  },
+  "schemes": ["https"],
+  "paths": {
+    "/hours": {
+      "get": {
+        "summary": "Get operating hours and queue ARN",
+        "parameters": [
+          {
+            "name": "lob",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "description": "Line-of-business (e.g. Bank or Insurance)"
+          },
+          {
+            "name": "service",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "description": "Service name under the lob (e.g. credit)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "hours": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                      "openTime": { "type": "string" },
+                      "closeTime": { "type": "string" }
+                    },
+                    "required": ["openTime", "closeTime"]
+                  }
+                },
+                "queueArn": { "type": "string" }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "error": { "type": "string" }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "error": { "type": "string" }
+              }
+            }
+          }
+        },
+        "x-amazon-apigateway-integration": {
+          "uri": "arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${lambda_arn}/invocations",
+          "passthroughBehavior": "when_no_match",
+          "httpMethod": "POST",
+          "type": "aws_proxy"
+        }
+      },
+      "put": {
+        "summary": "Batch update operating hours and/or queue ARN",
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "lob": { "type": "string" },
+                    "service": { "type": "string" },
+                    "hours": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "openTime": { "type": "string" },
+                          "closeTime": { "type": "string" }
+                        },
+                        "required": ["openTime", "closeTime"]
+                      }
+                    },
+                    "queueArn": { "type": "string" }
+                  },
+                  "required": ["lob", "service"]
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "lob": { "type": "string" },
+                      "service": { "type": "string" },
+                      "hours": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "properties": {
+                            "openTime": { "type": "string" },
+                            "closeTime": { "type": "string" }
+                          },
+                          "required": ["openTime", "closeTime"]
+                        }
+                      },
+                      "queueArn": { "type": "string" }
+                    },
+                    "required": ["lob", "service"]
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Batch update results",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "lob": { "type": "string" },
+                  "service": { "type": "string" },
+                  "success": { "type": "boolean" },
+                  "message": { "type": "string" }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "error": { "type": "string" }
+              }
+            }
+          }
+        },
+        "x-amazon-apigateway-integration": {
+          "uri": "arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${lambda_arn}/invocations",
+          "passthroughBehavior": "when_no_match",
+          "httpMethod": "POST",
+          "type": "aws_proxy"
+        }
+      }
+    }
+  }
+}
+---------------------------------------------------------------------------------
+
+
+// cmd/item/main.go
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"os"
+	"regexp"
+	"strings"
+
+	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-lambda-go/lambda"
+	"go.uber.org/zap"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+)
+
+/* ───── request / response ───── */
+
+// Single update request
+type req struct {
+	Lob      string            `json:"lob"`
+	Service  string            `json:"service"`
+	Hours    map[string]oneDay `json:"hours,omitempty"`
+	QueueArn string            `json:"queueArn,omitempty"`
+}
+
+type oneDay struct {
+	OpenTime  string `json:"openTime"`
+	CloseTime string `json:"closeTime"`
+}
+
+// Batch response item
+type itemResp struct {
+	Lob     string `json:"lob"`
+	Service string `json:"service"`
+	Success bool   `json:"success"`
+	Message string `json:"message,omitempty"`
+}
+
+/* ───── globals ───── */
+
+var (
+	tableName = mustEnv("TABLE_NAME")
+	ddb       *dynamodb.Client
+	log       *zap.Logger
+	timeRE    = regexp.MustCompile(`^(?:[01]\d|2[0-3]):[0-5]\d$`)
+)
+
+/* ───── Lambda entrypoint ───── */
+
+func handler(ctx context.Context, ev events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+	switch ev.HTTPMethod {
+	case "GET":
+		return handleGet(ctx, ev)
+	case "PUT":
+		return handleBatchUpdate(ctx, ev)
+	default:
+		return fail(405, "method not allowed"), nil
+	}
+}
+
+/* ───── GET handler ───── */
+
+func handleGet(ctx context.Context, ev events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+	lob := ev.QueryStringParameters["lob"]
+	svc := ev.QueryStringParameters["service"]
+	if strings.TrimSpace(lob) == "" || strings.TrimSpace(svc) == "" {
+		return fail(400, "lob and service query parameters required"), nil
+	}
+
+	out, err := ddb.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]types.AttributeValue{
+			"lob": &types.AttributeValueMemberS{Value: lob},
+		},
+	})
+	if err != nil {
+		log.Error("dynamodb GetItem failed", zap.Error(err))
+		return fail(500, "internal error"), nil
+	}
+	if out.Item == nil {
+		return fail(404, "not found"), nil
+	}
+
+	resp := map[string]interface{}{
+		"hours":    map[string]oneDay{},
+		"queueArn": "",
+	}
+
+	// Extract services.<svc>
+	svcsAttr, ok := out.Item["services"].(*types.AttributeValueMemberM)
+	if !ok {
+		return fail(500, "services map missing"), nil
+	}
+	svcAttr, ok := svcsAttr.Value[svc].(*types.AttributeValueMemberM)
+	if !ok {
+		return fail(404, "unknown service"), nil
+	}
+
+	// Read queueArn
+	if qa, ok := svcAttr.Value["queueArn"].(*types.AttributeValueMemberS); ok {
+		resp["queueArn"] = qa.Value
+	}
+
+	// Read operatingHours
+	if ohMap, ok := svcAttr.Value["operatingHours"].(*types.AttributeValueMemberM); ok {
+		hours := make(map[string]oneDay)
+		for day, av := range ohMap.Value {
+			if dayM, ok2 := av.(*types.AttributeValueMemberM); ok2 {
+				open := dayM.Value["openTime"].(*types.AttributeValueMemberS).Value
+				close := dayM.Value["closeTime"].(*types.AttributeValueMemberS).Value
+				hours[day] = oneDay{OpenTime: open, CloseTime: close}
+			}
+		}
+		resp["hours"] = hours
+	}
+
+	b, _ := json.Marshal(resp)
+	return events.APIGatewayProxyResponse{StatusCode: 200, Body: string(b)}, nil
+}
+
+/* ───── Batch PUT handler ───── */
+
+func handleBatchUpdate(ctx context.Context, ev events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+	// Try JSON array
+	var batch []req
+	if err := json.Unmarshal([]byte(ev.Body), &batch); err != nil {
+		// Fallback single
+		var single req
+		if err2 := json.Unmarshal([]byte(ev.Body), &single); err2 != nil {
+			return fail(400, "invalid JSON"), nil
+		}
+		batch = []req{single}
+	}
+
+	var results []itemResp
+	for _, op := range batch {
+		res := itemResp{Lob: op.Lob, Service: op.Service}
+		if err := validate(op); err != nil {
+			res.Success = false
+			res.Message = err.Error()
+		} else if msg, err := applyUpdate(ctx, op); err != nil {
+			res.Success = false
+			res.Message = err.Error()
+		} else {
+			res.Success = true
+			res.Message = msg
+		}
+		results = append(results, res)
+	}
+
+	body, _ := json.Marshal(results)
+	return events.APIGatewayProxyResponse{StatusCode: 200, Body: string(body)}, nil
+}
+
+/* ───── core update logic ───── */
+
+func applyUpdate(ctx context.Context, r req) (string, error) {
+	names := map[string]string{
+		"#S":  "services",
+		"#SV": r.Service,
+	}
+	values := map[string]types.AttributeValue{}
+	var setParts []string
+	idx := 0
+
+	if strings.TrimSpace(r.QueueArn) != "" {
+		names["#QA"] = "queueArn"
+		values[":qa"] = &types.AttributeValueMemberS{Value: r.QueueArn}
+		setParts = append(setParts, "#S.#SV.#QA = :qa")
+	}
+
+	if len(r.Hours) > 0 {
+		names["#OH"] = "operatingHours"
+		for day, h := range r.Hours {
+			dAlias := fmt.Sprintf("#d%d", idx)
+			vAlias := fmt.Sprintf(":v%d", idx)
+			names[dAlias] = day
+			values[vAlias] = &types.AttributeValueMemberM{Value: map[string]types.AttributeValue{
+				"openTime":  &types.AttributeValueMemberS{Value: h.OpenTime},
+				"closeTime": &types.AttributeValueMemberS{Value: h.CloseTime},
+			}}
+			setParts = append(setParts, fmt.Sprintf("#S.#SV.#OH.%s = %s", dAlias, vAlias))
+			idx++
+		}
+	}
+
+	input := &dynamodb.UpdateItemInput{
+		TableName:                 aws.String(tableName),
+		Key:                       map[string]types.AttributeValue{"lob": &types.AttributeValueMemberS{Value: r.Lob}},
+		UpdateExpression:          aws.String("SET " + strings.Join(setParts, ", ")),
+		ExpressionAttributeNames:  names,
+		ExpressionAttributeValues: values,
+	}
+
+	if _, err := ddb.UpdateItem(ctx, input); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("updated %d field(s)", len(setParts)), nil
+}
+
+/* ───── validation & helpers ───── */
+
+func validate(r req) error {
+	if r.Lob == "" {
+		return errors.New("lob is required")
+	}
+	if r.Service == "" {
+		return errors.New("service is required")
+	}
+	if len(r.Hours) == 0 && strings.TrimSpace(r.QueueArn) == "" {
+		return errors.New("either hours or queueArn must be provided")
+	}
+	for day, h := range r.Hours {
+		if !timeRE.MatchString(h.OpenTime) || !timeRE.MatchString(h.CloseTime) {
+			return fmt.Errorf("%s times must be HH:MM", day)
+		}
+		if h.OpenTime >= h.CloseTime {
+			return fmt.Errorf("%s openTime must be before closeTime", day)
+		}
+	}
+	return nil
+}
+
+func fail(code int, msg string) events.APIGatewayProxyResponse {
+	b, _ := json.Marshal(map[string]string{"error": msg})
+	return events.APIGatewayProxyResponse{StatusCode: code, Body: string(b)}
+}
+
+func mustEnv(k string) string {
+	v := os.Getenv(k)
+	if v == "" {
+		fmt.Fprintf(os.Stderr, "missing env %s\n", k)
+		os.Exit(1)
+	}
+	return v
+}
+
+/* ───── bootstrap & local harness ───── */
+
+func init() {
+	var err error
+	log, err = zap.NewProduction()
+	if err != nil {
+		panic(err)
+	}
+	cfg, err := config.LoadDefaultConfig(context.Background())
+	if err != nil {
+		log.Fatal("aws cfg", zap.Error(err))
+	}
+	ddb = dynamodb.NewFromConfig(cfg)
+}
+
+func main() {
+	local := flag.Bool("local", false, "run locally")
+	method := flag.String("method", "PUT", "HTTP method: GET or PUT")
+	lob := flag.String("lob", "", "lob for GET")
+	service := flag.String("service", "", "service for GET")
+	file := flag.String("file", "testdata/update_multiple.json", "path to JSON file")
+	flag.Parse()
+
+	if *local {
+		b, err := os.ReadFile(*file)
+		if err != nil {
+			panic(err)
+		}
+		ev := events.APIGatewayProxyRequest{
+			HTTPMethod: strings.ToUpper(*method),
+			Body:       string(b),
+		}
+		if strings.ToUpper(*method) == "GET" {
+			ev.QueryStringParameters = map[string]string{"lob": *lob, "service": *service}
+		}
+		resp, _ := handler(context.Background(), ev)
+		fmt.Printf("status: %d\nbody: %s\n", resp.StatusCode, resp.Body)
+		return
+	}
+
+	lambda.Start(handler)
+}
+----------------------------------------------
+
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"testing"
+
+	"github.com/aws/aws-lambda-go/events"
+)
+
+// --- 1) Tests for validate(req) ---
+
+func TestValidate(t *testing.T) {
+	cases := []struct {
+		name    string
+		in      req
+		wantErr string
+	}{
+		{
+			name:    "missing both lob and service",
+			in:      req{},
+			wantErr: "lob is required",
+		},
+		{
+			name:    "missing service",
+			in:      req{Lob: "Bank"},
+			wantErr: "service is required",
+		},
+		{
+			name:    "no hours or queueArn",
+			in:      req{Lob: "Bank", Service: "credit"},
+			wantErr: "either hours or queueArn must be provided",
+		},
+		{
+			name:    "bad time format",
+			in:      req{Lob: "Bank", Service: "credit", Hours: map[string]oneDay{"Monday": {"25:00", "17:00"}}},
+			wantErr: "Monday times must be HH:MM",
+		},
+		{
+			name:    "openTime ≥ closeTime",
+			in:      req{Lob: "Bank", Service: "credit", Hours: map[string]oneDay{"Monday": {"18:00", "09:00"}}},
+			wantErr: "Monday openTime must be before closeTime",
+		},
+		{
+			name: "valid with hours only",
+			in:   req{Lob: "Bank", Service: "credit", Hours: map[string]oneDay{"Monday": {"09:00", "17:00"}}},
+		},
+		{
+			name: "valid with queueArn only",
+			in:   req{Lob: "Bank", Service: "debit", QueueArn: "arn:..."},
+		},
+	}
+
+	for _, tc := range cases {
+		err := validate(tc.in)
+		if tc.wantErr != "" {
+			if err == nil || err.Error() != tc.wantErr {
+				t.Errorf("%s: expected error %q, got %v", tc.name, tc.wantErr, err)
+			}
+		} else {
+			if err != nil {
+				t.Errorf("%s: expected no error, got %v", tc.name, err)
+			}
+		}
+	}
+}
+
+// --- 2) Tests for JSON‐parsing/fallback in handleBatchUpdate ---
+
+func TestHandleBatchUpdate_InvalidJSON(t *testing.T) {
+	ev := events.APIGatewayProxyRequest{
+		HTTPMethod: "PUT",
+		Body:       `not a json`,
+	}
+	resp, _ := handleBatchUpdate(context.Background(), ev)
+	if resp.StatusCode != 400 {
+		t.Fatalf("expected 400 on invalid JSON, got %d", resp.StatusCode)
+	}
+	var errObj map[string]string
+	if err := json.Unmarshal([]byte(resp.Body), &errObj); err != nil {
+		t.Fatalf("body not JSON: %v", err)
+	}
+	if errObj["error"] != "invalid JSON" {
+		t.Errorf("expected error \"invalid JSON\", got %q", errObj["error"])
+	}
+}
+
+func TestHandleBatchUpdate_SingleFallback(t *testing.T) {
+	// "{}" unmarshals to a single req with zero‐values → validate fails with "lob is required"
+	ev := events.APIGatewayProxyRequest{
+		HTTPMethod: "PUT",
+		Body:       `{}`,
+	}
+	resp, _ := handleBatchUpdate(context.Background(), ev)
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var batch []itemResp
+	if err := json.Unmarshal([]byte(resp.Body), &batch); err != nil {
+		t.Fatalf("response is not JSON array: %v", err)
+	}
+	if len(batch) != 1 {
+		t.Fatalf("expected single-element result, got %d", len(batch))
+	}
+	got := batch[0]
+	if got.Success {
+		t.Errorf("expected Success=false, got true")
+	}
+	if got.Message != "lob is required" {
+		t.Errorf("expected message \"lob is required\", got %q", got.Message)
+	}
+}
+
+func TestHandleBatchUpdate_ArrayFallback(t *testing.T) {
+	body := `[{"lob":"Bank","service":"credit","queueArn":"arn:example"}]`
+	ev := events.APIGatewayProxyRequest{
+		HTTPMethod: "PUT",
+		Body:       body,
+	}
+	resp, _ := handleBatchUpdate(context.Background(), ev)
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var batch []itemResp
+	if err := json.Unmarshal([]byte(resp.Body), &batch); err != nil {
+		t.Fatalf("response is not JSON array: %v", err)
+	}
+	if len(batch) != 1 {
+		t.Fatalf("expected single-element result, got %d", len(batch))
+	}
+	// Now that applyUpdate is wired, we expect success
+	if !batch[0].Success {
+		t.Errorf("expected Success=true, got false (message=%q)", batch[0].Message)
+	}
+}
+
+--------------------------------------------------------------------
+
+
+package main
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/aws/aws-lambda-go/lambda"
+	"go.uber.org/zap"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+)
+
+// ─────── Request / Response ───────
+
+type connectEvent struct {
+	Lob     string `json:"lob"`     // e.g. "Bank" or "Insurance"
+	Service string `json:"service"` // e.g. "credit"
+}
+
+type connectResp struct {
+	IsOpen bool   `json:"isOpen"`
+	Queue  string `json:"queue,omitempty"`
+	Msg    string `json:"msg,omitempty"`
+}
+type DynamoDBAPI interface {
+	GetItem(ctx context.Context, params *dynamodb.GetItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error)
+}
+
+// ─────────── Globals ───────────
+
+var (
+	tableName = os.Getenv("TABLE_NAME") // e.g. "OperatingHours"
+	centralTZ = time.FixedZone("CST", -6*60*60)
+	log       *zap.SugaredLogger
+	ddb       DynamoDBAPI
+)
+
+// ─────────── init() ───────────
+
+func init() {
+	// set up logger
+	zl, err := zap.NewProduction()
+	if err != nil {
+		panic(err)
+	}
+	log = zl.Sugar()
+
+	// load AWS config + create DynamoDB client
+	cfg, err := config.LoadDefaultConfig(context.Background())
+	if err != nil {
+		log.Fatalf("load AWS cfg: %v", err)
+	}
+	ddb = dynamodb.NewFromConfig(cfg)
+
+	// fallback default table name
+	if tableName == "" {
+		tableName = "OperatingHours"
+	}
+}
+
+// ─────────── Handler ───────────
+
+func handler(ctx context.Context, ev connectEvent) (connectResp, error) {
+	if ev.Lob == "" || ev.Service == "" {
+		return connectResp{
+			IsOpen: false,
+			Msg:    "lob and service are required",
+		}, nil
+	}
+
+	// 1) Fetch the item for this lob
+	out, err := ddb.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]types.AttributeValue{
+			"lob": &types.AttributeValueMemberS{Value: ev.Lob},
+		},
+	})
+	if err != nil {
+		log.Errorw("dynamodb GetItem failed", "error", err)
+		return connectResp{IsOpen: false, Msg: "dynamodb error"}, nil
+	}
+	if out.Item == nil {
+		return connectResp{IsOpen: false, Msg: "no such lob"}, nil
+	}
+
+	// 2) Unmarshal services map
+	var row struct {
+		Services map[string]struct {
+			QueueArn       string `dynamodbav:"queueArn"`
+			OperatingHours map[string]struct {
+				OpenTime  string `dynamodbav:"openTime"`
+				CloseTime string `dynamodbav:"closeTime"`
+			} `dynamodbav:"operatingHours"`
+		} `dynamodbav:"services"`
+	}
+	if err := attributevalue.UnmarshalMap(out.Item, &row); err != nil {
+		log.Errorw("unmarshal failed", "error", err)
+		return connectResp{IsOpen: false, Msg: "data unmarshal error"}, nil
+	}
+
+	// 3) Look up the requested service
+	svcMeta, ok := row.Services[ev.Service]
+	if !ok {
+		return connectResp{IsOpen: false, Msg: "unknown service"}, nil
+	}
+
+	// 4) Determine “today” in CST
+	now := time.Now().UTC().In(centralTZ)
+	day := now.Weekday().String() // e.g. "Monday"
+
+	// 5) See if hours exist & not all-zero
+	todayHrs, ok := svcMeta.OperatingHours[day]
+	if !ok || (todayHrs.OpenTime == "00:00" && todayHrs.CloseTime == "00:00") {
+		return connectResp{IsOpen: false}, nil
+	}
+
+	// 6) Parse open/close into full timestamps
+	openT, err1 := time.ParseInLocation("15:04", todayHrs.OpenTime, centralTZ)
+	closeT, err2 := time.ParseInLocation("15:04", todayHrs.CloseTime, centralTZ)
+	if err1 != nil || err2 != nil {
+		log.Errorw("bad time format", "open", todayHrs.OpenTime, "close", todayHrs.CloseTime)
+		return connectResp{IsOpen: false, Msg: "bad time format"}, nil
+	}
+	openT = time.Date(now.Year(), now.Month(), now.Day(), openT.Hour(), openT.Minute(), 0, 0, centralTZ)
+	closeT = time.Date(now.Year(), now.Month(), now.Day(), closeT.Hour(), closeT.Minute(), 0, 0, centralTZ)
+
+	// 7) Check if “now” is within [open, close)
+	isOpen := !now.Before(openT) && now.Before(closeT)
+	if !isOpen {
+		return connectResp{IsOpen: false}, nil
+	}
+
+	// 8) If open, queueArn must be set
+	if svcMeta.QueueArn == "" {
+		log.Warnw("no queueArn for open service", "lob", ev.Lob, "service", ev.Service)
+		return connectResp{IsOpen: false, Msg: "no queue configured"}, nil
+	}
+
+	return connectResp{
+		IsOpen: true,
+		Queue:  svcMeta.QueueArn,
+	}, nil
+}
+
+// ─────────── Local test harness ───────────
+
+func (r connectResp) String() string {
+	b, _ := json.MarshalIndent(r, "", "  ")
+	return string(b)
+}
+
+func runLocal() {
+	var ev connectEvent
+	_ = json.NewDecoder(bufio.NewReader(os.Stdin)).Decode(&ev)
+	resp, err := handler(context.Background(), ev)
+	if err != nil {
+		log.Fatalf("handler error: %v", err)
+	}
+	fmt.Println(resp.String())
+}
+
+// ─────────── main() ───────────
+
+func main() {
+	if os.Getenv("LOCAL_TEST") == "true" {
+		runLocal()
+		return
+	}
+	lambda.Start(handler)
+}
+-----------------------------
+
+
+// main_test.go
+package main
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+)
+
+// mockDDB lets us control GetItem’s output and error.
+type mockDDB struct {
+	out *dynamodb.GetItemOutput
+	err error
+}
+
+func (m *mockDDB) GetItem(ctx context.Context, params *dynamodb.GetItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error) {
+	return m.out, m.err
+}
+
+func TestHandler_MissingParams(t *testing.T) {
+	// these should all return the "lob and service are required" message
+	cases := []connectEvent{
+		{"", ""},
+		{"Bank", ""},
+		{"", "credit"},
+	}
+
+	for _, ev := range cases {
+		ddb = &mockDDB{} // no call should occur
+		got, err := handler(context.Background(), ev)
+		if err != nil {
+			t.Fatalf("unexpected error for %v: %v", ev, err)
+		}
+		if got.IsOpen {
+			t.Errorf("expected IsOpen=false for %v, got true", ev)
+		}
+		if got.Msg != "lob and service are required" {
+			t.Errorf("expected Msg=\"lob and service are required\" for %v, got %q", ev, got.Msg)
+		}
+	}
+}
+
+func TestHandler_DynamoDBError(t *testing.T) {
+	ddb = &mockDDB{out: nil, err: errors.New("boom")}
+	ev := connectEvent{"Bank", "credit"}
+	got, err := handler(context.Background(), ev)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Msg != "dynamodb error" {
+		t.Errorf("expected Msg=\"dynamodb error\", got %q", got.Msg)
+	}
+	if got.IsOpen {
+		t.Error("expected IsOpen=false on DynamoDB error")
+	}
+}
+
+func TestHandler_NoSuchLob(t *testing.T) {
+	ddb = &mockDDB{out: &dynamodb.GetItemOutput{Item: nil}, err: nil}
+	ev := connectEvent{"Bank", "credit"}
+	got, _ := handler(context.Background(), ev)
+	if got.Msg != "no such lob" {
+		t.Errorf("expected Msg=\"no such lob\", got %q", got.Msg)
+	}
+	if got.IsOpen {
+		t.Error("expected IsOpen=false when no item returned")
+	}
+}
+
+func TestHandler_UnknownService(t *testing.T) {
+	// return a map without "services" field populated
+	ddb = &mockDDB{out: &dynamodb.GetItemOutput{Item: map[string]types.AttributeValue{}}, err: nil}
+	ev := connectEvent{"Bank", "credit"}
+	got, _ := handler(context.Background(), ev)
+	if got.Msg != "unknown service" {
+		t.Errorf("expected Msg=\"unknown service\", got %q", got.Msg)
+	}
+}
+
+func TestHandler_ClosedHours(t *testing.T) {
+	// build a services.credit entry whose hours are 00:00–00:00 → always closed
+	today := time.Now().UTC().In(centralTZ).Weekday().String()
+	item := map[string]types.AttributeValue{
+		"services": &types.AttributeValueMemberM{Value: map[string]types.AttributeValue{
+			"credit": &types.AttributeValueMemberM{Value: map[string]types.AttributeValue{
+				"queueArn": &types.AttributeValueMemberS{Value: "arn:aws:..."},
+				"operatingHours": &types.AttributeValueMemberM{Value: map[string]types.AttributeValue{
+					today: &types.AttributeValueMemberM{Value: map[string]types.AttributeValue{
+						"openTime":  &types.AttributeValueMemberS{Value: "00:00"},
+						"closeTime": &types.AttributeValueMemberS{Value: "00:00"},
+					}},
+				}},
+			}},
+		}},
+	}
+	ddb = &mockDDB{out: &dynamodb.GetItemOutput{Item: item}, err: nil}
+	ev := connectEvent{"Bank", "credit"}
+	got, _ := handler(context.Background(), ev)
+	if got.IsOpen {
+		t.Error("expected IsOpen=false during all-zero hours")
+	}
+}
+
+func TestHandler_OpenWithQueue(t *testing.T) {
+	// build a services.credit entry whose hours straddle now → open
+	now := time.Now().UTC().In(centralTZ)
+	today := now.Weekday().String()
+	open := now.Add(-time.Hour).Format("15:04")
+	close := now.Add(time.Hour).Format("15:04")
+
+	item := map[string]types.AttributeValue{
+		"services": &types.AttributeValueMemberM{Value: map[string]types.AttributeValue{
+			"credit": &types.AttributeValueMemberM{Value: map[string]types.AttributeValue{
+				"queueArn": &types.AttributeValueMemberS{Value: "arn:aws:test"},
+				"operatingHours": &types.AttributeValueMemberM{Value: map[string]types.AttributeValue{
+					today: &types.AttributeValueMemberM{Value: map[string]types.AttributeValue{
+						"openTime":  &types.AttributeValueMemberS{Value: open},
+						"closeTime": &types.AttributeValueMemberS{Value: close},
+					}},
+				}},
+			}},
+		}},
+	}
+	ddb = &mockDDB{out: &dynamodb.GetItemOutput{Item: item}, err: nil}
+	ev := connectEvent{"Bank", "credit"}
+	got, _ := handler(context.Background(), ev)
+	if !got.IsOpen {
+		t.Error("expected IsOpen=true within open hours")
+	}
+	if got.Queue != "arn:aws:test" {
+		t.Errorf("expected Queue=\"arn:aws:test\", got %q", got.Queue)
+	}
+}
+------------------------------
