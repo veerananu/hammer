@@ -1,0 +1,7 @@
+{
+    "httpMethod": "GET",
+    "queryStringParameters": {
+        "lob": "test-lob",
+        "service": "test-service"
+    }
+}
