@@ -1,0 +1,300 @@
+package main
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+)
+
+// fakeDDB is a stub implementing DynamoDBAPI for testing
+type fakeDDB struct {
+	out *dynamodb.GetItemOutput
+	err error
+}
+
+func (f *fakeDDB) GetItem(ctx context.Context, input *dynamodb.GetItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error) {
+	return f.out, f.err
+}
+
+func init() {
+	// override the timezone for deterministic tests
+	centralTZ = time.FixedZone("TEST", 0)
+}
+
+func TestHandler_MissingParams(t *testing.T) {
+	ddb = &fakeDDB{}
+	ev := connectLambdaEvent{}
+	resp, _ := handler(context.Background(), ev)
+	if resp.IsOpen != "false" || resp.Msg != "lob and service are required" {
+		t.Fatalf("expected missing-param error; got %+v", resp)
+	}
+}
+
+func TestHandler_DynamoError(t *testing.T) {
+	errMsg := "boom"
+	ddb = &fakeDDB{err: &types.InternalServerError{Message: &errMsg}}
+	ev := connectLambdaEvent{}
+	ev.Details.Parameters.Lob = "Bank"
+	ev.Details.Parameters.Service = "credit"
+
+	resp, _ := handler(context.Background(), ev)
+	if resp.IsOpen != "false" || resp.Msg != "dynamodb error" {
+		t.Fatalf("expected dynamodb error; got %+v", resp)
+	}
+}
+
+func TestHandler_NoSuchLob(t *testing.T) {
+	ddb = &fakeDDB{out: &dynamodb.GetItemOutput{Item: nil}}
+	ev := connectLambdaEvent{}
+	ev.Details.Parameters.Lob = "Bank"
+	ev.Details.Parameters.Service = "credit"
+
+	resp, _ := handler(context.Background(), ev)
+	if resp.IsOpen != "false" || resp.Msg != "no such lob" {
+		t.Fatalf("expected no such lob; got %+v", resp)
+	}
+}
+
+func TestHandler_UnknownService(t *testing.T) {
+	row := struct {
+		Services map[string]struct {
+			QueueArn       string
+			OperatingHours map[string]struct {
+				OpenTime  string
+				CloseTime string
+			}
+		} `dynamodbav:"services"`
+	}{
+		Services: map[string]struct {
+			QueueArn       string
+			OperatingHours map[string]struct {
+				OpenTime  string
+				CloseTime string
+			}
+		}{
+			"otherService": {QueueArn: "", OperatingHours: map[string]struct {
+				OpenTime  string
+				CloseTime string
+			}{}},
+		},
+	}
+	item, err := attributevalue.MarshalMap(row)
+	if err != nil {
+		t.Fatalf("failed to marshal row: %v", err)
+	}
+	ddb = &fakeDDB{out: &dynamodb.GetItemOutput{Item: item}}
+	ev := connectLambdaEvent{}
+	ev.Details.Parameters.Lob = "Bank"
+	ev.Details.Parameters.Service = "credit"
+
+	resp, _ := handler(context.Background(), ev)
+	if resp.IsOpen != "false" || resp.Msg != "unknown service" {
+		t.Fatalf("expected unknown service; got %+v", resp)
+	}
+}
+
+func TestHandler_ClosedHours(t *testing.T) {
+	// build an item with the service present but no hours for today
+	row := struct {
+		Services map[string]struct {
+			QueueArn       string
+			OperatingHours map[string]struct {
+				OpenTime  string
+				CloseTime string
+			}
+		} `dynamodbav:"services"`
+	}{
+		Services: map[string]struct {
+			QueueArn       string
+			OperatingHours map[string]struct {
+				OpenTime  string
+				CloseTime string
+			}
+		}{
+			"credit": {QueueArn: "arn:aws:test", OperatingHours: map[string]struct {
+				OpenTime  string
+				CloseTime string
+			}{}},
+		},
+	}
+	item, err := attributevalue.MarshalMap(row)
+	if err != nil {
+		t.Fatalf("failed to marshal row: %v", err)
+	}
+	ddb = &fakeDDB{out: &dynamodb.GetItemOutput{Item: item}}
+	ev := connectLambdaEvent{}
+	ev.Details.Parameters.Lob = "Bank"
+	ev.Details.Parameters.Service = "credit"
+
+	resp, _ := handler(context.Background(), ev)
+	if resp.IsOpen != "false" || resp.Msg != "" {
+		t.Fatalf("expected closed hours; got %+v", resp)
+	}
+}
+-----------------------------
+
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"strconv"
+	"time"
+
+	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"go.uber.org/zap"
+)
+
+// ─────── Connect Envelope ───────
+
+type connectLambdaEvent struct {
+	Details struct {
+		Parameters struct {
+			Lob     string `json:"lob"`
+			Service string `json:"service"`
+		} `json:"Parameters"`
+	} `json:"Details"`
+}
+
+type connectLambdaResponse struct {
+	IsOpen string `json:"isOpen"`
+	Queue  string `json:"queue,omitempty"`
+	Msg    string `json:"msg,omitempty"`
+}
+
+type DynamoDBAPI interface {
+	GetItem(ctx context.Context, params *dynamodb.GetItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error)
+}
+
+// ─────────── Globals ───────────
+
+var (
+	tableName = os.Getenv("TABLE_NAME") // e.g. "OperatingHours"
+	centralTZ = time.FixedZone("CST", -6*60*60)
+	log       *zap.SugaredLogger
+	ddb       DynamoDBAPI
+)
+
+// ─────────── init() ───────────
+
+func init() {
+	// set up logger
+	zl, err := zap.NewProduction()
+	if err != nil {
+		panic(err)
+	}
+	log = zl.Sugar()
+
+	// load AWS config + create DynamoDB client
+	cfg, err := config.LoadDefaultConfig(context.Background())
+	if err != nil {
+		log.Fatalf("load AWS cfg: %v", err)
+	}
+	ddb = dynamodb.NewFromConfig(cfg)
+
+	// fallback default table name
+	if tableName == "" {
+		tableName = "OperatingHours"
+	}
+}
+
+// ─────────── Handler ───────────
+
+func handler(ctx context.Context, ev connectLambdaEvent) (connectLambdaResponse, error) {
+	lob := ev.Details.Parameters.Lob
+	service := ev.Details.Parameters.Service
+	log.Infow("received parameters", "lob", lob, "service", service)
+
+	if lob == "" || service == "" {
+		return connectLambdaResponse{
+			IsOpen: "false",
+			Msg:    "lob and service are required",
+		}, nil
+	}
+
+	// 1) Fetch the item for this lob
+	out, err := ddb.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: &tableName,
+		Key: map[string]types.AttributeValue{
+			"lob": &types.AttributeValueMemberS{Value: lob},
+		},
+	})
+	if err != nil {
+		log.Errorw("dynamodb GetItem failed", "error", err)
+		return connectLambdaResponse{IsOpen: "false", Msg: "dynamodb error"}, nil
+	}
+	if out.Item == nil {
+		return connectLambdaResponse{IsOpen: "false", Msg: "no such lob"}, nil
+	}
+
+	// 2) Unmarshal services map
+	var row struct {
+		Services map[string]struct {
+			QueueArn       string `dynamodbav:"queueArn"`
+			OperatingHours map[string]struct {
+				OpenTime  string `dynamodbav:"openTime"`
+				CloseTime string `dynamodbav:"closeTime"`
+			} `dynamodbav:"operatingHours"`
+		} `dynamodbav:"services"`
+	}
+	if err := attributevalue.UnmarshalMap(out.Item, &row); err != nil {
+		log.Errorw("unmarshal failed", "error", err)
+		return connectLambdaResponse{IsOpen: "false", Msg: "data unmarshal error"}, nil
+	}
+
+	// 3) Look up the requested service
+	svcMeta, ok := row.Services[service]
+	if !ok {
+		return connectLambdaResponse{IsOpen: "false", Msg: "unknown service"}, nil
+	}
+
+	// 4) Determine “today” in CST
+	now := time.Now().UTC().In(centralTZ)
+	day := now.Weekday().String()
+
+	// 5) See if hours exist & not all-zero
+	todayHrs, ok := svcMeta.OperatingHours[day]
+	if !ok || (todayHrs.OpenTime == "00:00" && todayHrs.CloseTime == "00:00") {
+		return connectLambdaResponse{IsOpen: "false"}, nil
+	}
+
+	// 6) Parse open/close into full timestamps
+	openT, err1 := time.ParseInLocation("15:04", todayHrs.OpenTime, centralTZ)
+	closeT, err2 := time.ParseInLocation("15:04", todayHrs.CloseTime, centralTZ)
+	if err1 != nil || err2 != nil {
+		log.Errorw("bad time format", "open", todayHrs.OpenTime, "close", todayHrs.CloseTime)
+		return connectLambdaResponse{IsOpen: "false", Msg: "bad time format"}, nil
+	}
+	openT = time.Date(now.Year(), now.Month(), now.Day(), openT.Hour(), openT.Minute(), 0, 0, centralTZ)
+	closeT = time.Date(now.Year(), now.Month(), now.Day(), closeT.Hour(), closeT.Minute(), 0, 0, centralTZ)
+
+	// 7) Check if “now” is within [open, close)
+	isOpenBool := !now.Before(openT) && now.Before(closeT)
+
+	// 8) If open, queueArn must be set
+	if isOpenBool && svcMeta.QueueArn == "" {
+		log.Warnw("no queueArn for open service", "lob", lob, "service", service)
+		return connectLambdaResponse{IsOpen: "false", Msg: "no queue configured"}, nil
+	}
+
+	// format everything as strings
+	return connectLambdaResponse{
+		IsOpen: strconv.FormatBool(isOpenBool),
+		Queue:  svcMeta.QueueArn,
+	}, nil
+}
+
+// ─────────── main() ───────────
+
+func main() {
+	lambda.Start(handler)
+}
