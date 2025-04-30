@@ -1,0 +1,7 @@
+[
+  {
+    "lob": "Bank",
+    "service": "credit",
+    "hours": { "Monday": { "openTime": "09:00", "closeTime": "17:00" } }
+  }
+]
