@@ -1,0 +1,254 @@
+// cmd/item/main.go
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"regexp"
+	"strings"
+
+	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-lambda-go/lambda"
+	"go.uber.org/zap"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+)
+
+/* ───── request / response ───── */
+
+type req struct {
+	Lob      string            `json:"lob"`
+	Service  string            `json:"service"`
+	Hours    map[string]oneDay `json:"hours,omitempty"`
+	QueueArn string            `json:"queueArn,omitempty"`
+}
+
+type oneDay struct {
+	OpenTime  string `json:"openTime"`
+	CloseTime string `json:"closeTime"`
+}
+
+type itemResp struct {
+	Lob     string `json:"lob"`
+	Service string `json:"service"`
+	Success bool   `json:"success"`
+	Message string `json:"message,omitempty"`
+}
+
+/* ───── globals ───── */
+
+var (
+	tableName = mustEnv("TABLE_NAME")
+	d
+	ddb       *dynamodb.Client
+	log       *zap.Logger
+	timeRE    = regexp.MustCompile(`^(?:[01]\d|2[0-3]):[0-5]\d$`)
+)
+
+/* ───── Lambda entrypoint ───── */
+
+func handler(ctx context.Context, ev events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+	switch ev.HTTPMethod {
+	case "GET":
+		return handleGet(ctx, ev)
+	case "PUT":
+		return handleBatchUpdate(ctx, ev)
+	default:
+		return fail(405, "method not allowed"), nil
+	}
+}
+
+/* ───── GET handler ───── */
+
+func handleGet(ctx context.Context, ev events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+	lob := ev.QueryStringParameters["lob"]
+	svc := ev.QueryStringParameters["service"]
+	if strings.TrimSpace(lob) == "" || strings.TrimSpace(svc) == "" {
+		return fail(400, "lob and service query parameters required"), nil
+	}
+
+	out, err := ddb.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]types.AttributeValue{
+			"lob": &types.AttributeValueMemberS{Value: lob},
+		},
+	})
+	if err != nil {
+		log.Error("dynamodb GetItem failed", zap.Error(err))
+		return fail(500, "internal error"), nil
+	}
+	if out.Item == nil {
+		return fail(404, "not found"), nil
+	}
+
+	resp := map[string]interface{}{
+		"hours":    map[string]oneDay{},
+		"queueArn": "",
+	}
+
+	svcsAttr, ok := out.Item["services"].(*types.AttributeValueMemberM)
+	if !ok {
+		return fail(500, "services map missing"), nil
+	}
+	svcAttr, ok := svcsAttr.Value[svc].(*types.AttributeValueMemberM)
+	if !ok {
+		return fail(404, "unknown service"), nil
+	}
+
+	if qa, ok := svcAttr.Value["queueArn"].(*types.AttributeValueMemberS); ok {
+		resp["queueArn"] = qa.Value
+	}
+
+	if ohMap, ok := svcAttr.Value["operatingHours"].(*types.AttributeValueMemberM); ok {
+		hours := make(map[string]oneDay)
+		for day, av := range ohMap.Value {
+			if dayM, ok2 := av.(*types.AttributeValueMemberM); ok2 {
+				open := dayM.Value["openTime"].(*types.AttributeValueMemberS).Value
+				close := dayM.Value["closeTime"].(*types.AttributeValueMemberS).Value
+				hours[day] = oneDay{OpenTime: open, CloseTime: close}
+			}
+		}
+		resp["hours"] = hours
+	}
+
+	b, _ := json.Marshal(resp)
+	return events.APIGatewayProxyResponse{StatusCode: 200, Body: string(b)}, nil
+}
+
+/* ───── Batch PUT handler ───── */
+
+func handleBatchUpdate(ctx context.Context, ev events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+	var batch []req
+	if err := json.Unmarshal([]byte(ev.Body), &batch); err != nil {
+		var single req
+		if err2 := json.Unmarshal([]byte(ev.Body), &single); err2 != nil {
+			return fail(400, "invalid JSON"), nil
+		}
+		batch = []req{single}
+	}
+
+	var results []itemResp
+	for _, op := range batch {
+		res := itemResp{Lob: op.Lob, Service: op.Service}
+		if err := validate(op); err != nil {
+			res.Success = false
+			res.Message = err.Error()
+		} else if msg, err := applyUpdate(ctx, op); err != nil {
+			res.Success = false
+			res.Message = err.Error()
+		} else {
+			res.Success = true
+			res.Message = msg
+		}
+		results = append(results, res)
+	}
+
+	body, _ := json.Marshal(results)
+	return events.APIGatewayProxyResponse{StatusCode: 200, Body: string(body)}, nil
+}
+
+/* ───── core update logic ───── */
+
+func applyUpdate(ctx context.Context, r req) (string, error) {
+	names := map[string]string{"#S": "services", "#SV": r.Service}
+	values := map[string]types.AttributeValue{}
+	var setParts []string
+	idx := 0
+
+	if strings.TrimSpace(r.QueueArn) != "" {
+		names["#QA"] = "queueArn"
+		values[":qa"] = &types.AttributeValueMemberS{Value: r.QueueArn}
+		setParts = append(setParts, "#S.#SV.#QA = :qa")
+	}
+
+	if len(r.Hours) > 0 {
+		names["#OH"] = "operatingHours"
+		for day, h := range r.Hours {
+			dAlias := fmt.Sprintf("#d%d", idx)
+			vAlias := fmt.Sprintf(":v%d", idx)
+			names[dAlias] = day
+			values[vAlias] = &types.AttributeValueMemberM{Value: map[string]types.AttributeValue{
+				"openTime":  &types.AttributeValueMemberS{Value: h.OpenTime},
+				"closeTime": &types.AttributeValueMemberS{Value: h.CloseTime},
+			}}
+			setParts = append(setParts, fmt.Sprintf("#S.#SV.#OH.%s = %s", dAlias, vAlias))
+			idx++
+		}
+	}
+
+	input := &dynamodb.UpdateItemInput{
+		TableName: aws.String(tableName),
+		Key:       map[string]types.AttributeValue{"lob": &types.AttributeValueMemberS{Value: r.Lob}},
+		UpdateExpression:         aws.String("SET " + strings.Join(setParts, ", ")),
+		ExpressionAttributeNames:  names,
+		ExpressionAttributeValues: values,
+	}
+
+	if _, err := ddb.UpdateItem(ctx, input); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("updated %d field(s)", len(setParts)), nil
+}
+
+/* ───── validation & helpers ───── */
+
+func validate(r req) error {
+	if r.Lob == "" {
+		return errors.New("lob is required")
+	}
+	if r.Service == "" {
+		return errors.New("service is required")
+	}
+	if len(r.Hours) == 0 && strings.TrimSpace(r.QueueArn) == "" {
+		return errors.New("either hours or queueArn must be provided")
+	}
+	expr := timeRE
+	for day, h := range r.Hours {
+		if !expr.MatchString(h.OpenTime) || !expr.MatchString(h.CloseTime) {
+			return fmt.Errorf("%s times must be HH:MM", day)
+		}
+		if h.OpenTime >= h.CloseTime {
+			return fmt.Errorf("%s openTime must be before closeTime", day)
+		}
+	}
+	return nil
+}
+
+func fail(code int, msg string) events.APIGatewayProxyResponse {
+	b, _ := json.Marshal(map[string]string{"error": msg})
+	return events.APIGatewayProxyResponse{StatusCode: code, Body: string(b)}
+}
+
+func mustEnv(k string) string {
+	v := os.Getenv(k)
+	if v == "" {
+		fmt.Fprintf(os.Stderr, "missing env %s\n", k)
+		os.Exit(1)
+	}
+	return v
+}
+
+/* ───── bootstrap ───── */
+
+func init() {
+	var err error
+	log, err = zap.NewProduction()
+	if err != nil {
+		panic(err)
+	}
+	cfg, err := config.LoadDefaultConfig(context.Background())
+	if err != nil {
+		log.Fatal("aws cfg", zap.Error(err))
+	}
+	ddb = dynamodb.NewFromConfig(cfg)
+}
+
+func main() {
+	lambda.Start(handler)
+}
