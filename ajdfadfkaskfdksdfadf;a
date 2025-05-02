@@ -1,0 +1,251 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"log"
+	"os"
+	"strconv"
+	"time"
+
+	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/aws-sdk-go-v2/aws"
+	"github.com/aws-sdk-go-v2/config"
+	"github.com/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+)
+
+var (
+	ddb       *dynamodb.Client
+	tableName string
+)
+
+func init() {
+	tableName = os.Getenv("TABLE_NAME")
+	if tableName == "" {
+		log.Fatal("TABLE_NAME environment variable is required")
+	}
+
+	cfg, err := config.LoadDefaultConfig(context.Background())
+	if err != nil {
+		log.Fatalf("unable to load AWS SDK config: %v", err)
+	}
+	ddb = dynamodb.NewFromConfig(cfg)
+}
+
+// ConnectEvent matches your incoming payload.
+type ConnectEvent struct {
+	EventType  string `json:"EventType"` // "LOGIN"/"LOGOUT" or "AGENT_EVENT"
+	AgentEvent struct {
+		AgentEventType string `json:"AgentEventType"`
+	} `json:"AgentEvent"`
+	EventTimestamp string `json:"EventTimestamp,omitempty"` // optional original timestamp
+}
+
+func handler(ctx context.Context, kev events.KinesisEvent) error {
+	for idx, rec := range kev.Records {
+		log.Printf("[#%d] raw: %s", idx, string(rec.Kinesis.Data))
+
+		var evt ConnectEvent
+		if err := json.Unmarshal(rec.Kinesis.Data, &evt); err != nil {
+			log.Printf("[#%d] unmarshal error: %v", idx, err)
+			continue
+		}
+
+		action := evt.EventType
+		if action == "AGENT_EVENT" {
+			action = evt.AgentEvent.AgentEventType
+		}
+		var delta int
+		switch action {
+		case "LOGIN":
+			delta = 1
+		case "LOGOUT":
+			delta = -1
+		default:
+			log.Printf("[#%d] skipping unknown action %q", idx, action)
+			continue
+		}
+
+		// Use high-resolution now for a unique sort key
+		now := time.Now().UTC()
+		eventTs := now.Format(time.RFC3339Nano)
+		dateKey := now.Format("2006-01-02")
+		log.Printf("[#%d] action=%s at=%s", idx, action, eventTs)
+
+		// Query lastCount for today
+		qo, err := ddb.Query(ctx, &dynamodb.QueryInput{
+			TableName:                aws.String(tableName),
+			KeyConditionExpression:   aws.String("#D = :date"),
+			ExpressionAttributeNames: map[string]string{"#D": "Date"},
+			ExpressionAttributeValues: map[string]types.AttributeValue{
+				":date": &types.AttributeValueMemberS{Value: dateKey},
+			},
+			ScanIndexForward: aws.Bool(false),
+			Limit:            aws.Int32(1),
+		})
+		if err != nil {
+			log.Printf("[#%d] query error: %v", idx, err)
+			return err
+		}
+
+		lastCount := 0
+		if len(qo.Items) > 0 {
+			if n, ok := qo.Items[0]["CurrentLoggedIn"].(*types.AttributeValueMemberN); ok {
+				lastCount, _ = strconv.Atoi(n.Value)
+			}
+		}
+		log.Printf("[#%d] lastCount=%d", idx, lastCount)
+
+		// Compute newCount and write a new, separate item
+		newCount := lastCount + delta
+		item := map[string]types.AttributeValue{
+			"Date":            &types.AttributeValueMemberS{Value: dateKey},
+			"EventTimestamp":  &types.AttributeValueMemberS{Value: eventTs},
+			"EventType":       &types.AttributeValueMemberS{Value: action},
+			"CurrentLoggedIn": &types.AttributeValueMemberN{Value: strconv.Itoa(newCount)},
+		}
+
+		out, err := ddb.PutItem(ctx, &dynamodb.PutItemInput{
+			TableName:              aws.String(tableName),
+			Item:                   item,
+			ReturnConsumedCapacity: types.ReturnConsumedCapacityTotal,
+		})
+		if err != nil {
+			log.Printf("[#%d] put error: %v", idx, err)
+			return err
+		}
+		log.Printf("[#%d] put OK, consumed %v", idx, out.ConsumedCapacity)
+	}
+
+	return nil
+}
+
+func main() {
+	lambda.Start(handler)
+}
+-----------------------------------------------------------
+
+data "aws_kinesis_stream" "agent_events" {
+  name = "agentevents"    
+}
+
+
+
+
+
+resource "aws_iam_role" "lambda_role" {
+  name = "agent-events-processor-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "basic_exec" {
+  role       = aws_iam_role.lambda_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy" "lambda_kinesis_dynamo" {
+  name = "lambda-kinesis-dynamo-policy"
+  role = aws_iam_role.lambda_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = [
+          "kinesis:DescribeStream",
+          "kinesis:ListStreams",
+          "kinesis:GetShardIterator",
+          "kinesis:GetRecords",
+        ]
+        Resource = data.aws_kinesis_stream.agent_events.arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = [
+          "dynamodb:Query",
+          "dynamodb:PutItem",
+        ]
+        Resource = aws_dynamodb_table.agent_events.arn
+      }
+    ]
+  })
+}
+
+
+resource "aws_lambda_function" "agent_processor" {
+  function_name    = "agentnewlambda"
+  role             = aws_iam_role.lambda_role.arn
+  runtime          = "provided.al2"
+  handler          = "bootstrap"
+  architectures    = ["x86_64"]
+
+  filename         = "lambda.zip"
+  source_code_hash = filebase64sha256("lambda.zip")
+
+  memory_size = 128
+  timeout     = 30
+
+  environment {
+    variables = {
+      TABLE_NAME         = aws_dynamodb_table.agent_events.name
+      KINESIS_STREAM_ARN = data.aws_kinesis_stream.agent_events.arn
+    }
+  }
+
+  depends_on = [
+    aws_iam_role_policy.lambda_kinesis_dynamo,
+    aws_iam_role_policy_attachment.basic_exec,
+  ]
+}
+
+resource "aws_lambda_event_source_mapping" "from_kinesis" {
+  event_source_arn                   = data.aws_kinesis_stream.agent_events.arn
+  function_name                      = aws_lambda_function.agent_processor.arn
+  starting_position                  = "LATEST"
+  batch_size                         = 100
+  maximum_batching_window_in_seconds = 0
+  enabled                            = true
+}
+
+--------------------------------------------------------------------------------------
+
+variable "table_name" {
+  description = "Name of the DynamoDB table"
+  type        = string
+  default     = "AgentEvents"
+}
+
+resource "aws_dynamodb_table" "agent_events" {
+  name         = var.table_name
+  billing_mode = "PAY_PER_REQUEST"
+
+  # Composite primary key: partition by calendar date, sort by ISO timestamp
+  hash_key  = "Date"
+  range_key = "EventTimestamp"
+
+  attribute {
+    name = "Date"
+    type = "S"
+  }
+  attribute {
+    name = "EventTimestamp"
+    type = "S"
+  }
+
+
+
+output "dynamodb_table_name" {
+  description = "The name of the DynamoDB table"
+  value       = aws_dynamodb_table.agent_events.name
+}
