@@ -1,0 +1,24 @@
+# 1) Alias lookup
+data "aws_kms_alias" "amazonconnect" {
+  name = "<YOUR_ALIAS>"               # e.g. alias/amazonconnect
+}
+
+# 2) Resolve full key ARN
+data "aws_kms_key" "amazonconnect" {
+  key_id = data.aws_kms_alias.amazonconnect.target_key_id
+}
+
+# 3) Decrypt‑only policy for Lambda
+data "aws_iam_policy_document" "lambda_kms_decrypt" {
+  statement {
+    effect  = "Allow"
+    actions = ["kms:Decrypt", "kms:DescribeKey"]
+    resources = [data.aws_kms_key.amazonconnect.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "lambda_kms_decrypt" {
+  name   = "lambda-kms-decrypt"
+  role   = aws_iam_role.lambda_role.id      # your exec role
+  policy = data.aws_iam_policy_document.lambda_kms_decrypt.json
+}
