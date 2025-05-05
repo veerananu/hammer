@@ -1,0 +1,31 @@
+
+   2 $Env:CONNECT_INSTANCE_ID = 'abcd1234-5678-90ab-cdef-1234567890ab'
+   3 $Env:BasicChatFlowId = '2F8d67334e-5583-41d6-89c2-f654ea28c14d'
+   4 aws connect start-chat-contact --instance-id $Env:CONNECT_INSTANCE_ID --contact-flow-id $Env:BASIC_CHAT_FLOW --participant-details '{"DisplayName":"DevTest"}' --attributes '{"lob":"Bank","service":"credit","name":"era"}'
+   5 aws connect start-chat-contact --instance-id $Env:CONNECT_INSTANCE_ID --contact-flow-id $Env:BasicChatFlowId --participant-details '{"DisplayName":"DevTest"}' --attributes '{"lob":"Bank","service":"credit","name":"era"}'
+   6 aws connect start-chat-contact --instance-id $Env:CONNECT_INSTANCE_ID --contact-flow-id $Env:BasicChatFlowId --participant-details '{"DisplayName":"DevTest"}' --attributes '{"lob":"Bank","service":"credit","name":"era"}'
+   7 aws connect start-chat-contact `  --instance-id      $Env:CONNECT_INSTANCE_ID `  --contact-flow-id  $Env:BASIC_CHAT_FLOW `  --participant-details '{"DisplayName":"DevTest"}' `  --attributes '{"lob":"Bank","service":"credit","name":"era"}'
+   8 aws connect start-chat-contact `  --instance-id      $Env:CONNECT_INSTANCE_ID `  --contact-flow-id  $Env:BasicChatFlowId `  --participant-details '{"DisplayName":"DevTest"}' `  --attributes '{"lob":"Bank","service":"credit","name":"era"}'
+   9 aws connect start-chat-contact --instance-id $Env:CONNECT_INSTANCE_ID --contact-flow-id $Env:BasicChatFlowId --participant-details '{\"DisplayName\":\"DevTest\"}' --attributes '{\"lob\":\"Bank\",\"service\":\"credit\",\"name\":\"era\"}'
+  10 $Env:BasicChatFlowId = '2F8d67334e-5583-41d6-89c2-f654ea28c14d'
+  11 $Env:CONNECT_INSTANCE_ID = 'abcd1234-5678-90ab-cdef-1234567890ab'
+  12 aws connect start-chat-contact --instance-id $Env:CONNECT_INSTANCE_ID --contact-flow-id $Env:BasicChatFlowId --participant-details '{\"DisplayName\":\"DevTest\"}' --attributes '{\"lob\":\"Bank\",\"service\":\"credit\",\"name\":\"era\"}'
+  13 aws connect list-contact-flows --region us-west-2 --instance-id $Env:CONNECT_INSTANCE_ID --contact-flow-types CONTACT_FLOW --query "ContactFlowSummaryList[?State=='Published'].[Name,Id]" --output table
+  14 aws connect list-instances --region us-west-2 --query "InstanceSummaryList[*].[Id,InstanceAlias]" --output table
+  15 $Env:CONNECT_INSTANCE_ID = 'ad7288bd-ae6a-4e51-bb44-1184c6572cf3'
+  16 aws connect list-contact-flows --region us-west-2 --instance-id $Env:CONNECT_INSTANCE_ID --contact-flow-types CONTACT_FLOW --query "ContactFlowSummaryList[?State=='Published'].[Name,Id]" --output table
+  17 aws connect list-instances --region us-west-2 --query "InstanceSummaryList[*].[Id,InstanceAlias]" --output table
+  18 aws connect list-contact-flows --region us-west-2 --instance-id $Env:CONNECT_INSTANCE_ID --contact-flow-types CONTACT_FLOW --query "ContactFlowSummaryList[?State=='Published'].[Name,Id]" --output table
+  19  aws connect list-contact-flows --region us-west-2 --instance-id $Env:CONNECT_INSTANCE_ID --output table
+  20 aws connect list-contact-flows `  --region us-west-2 `  --instance-id $Env:CONNECT_INSTANCE_ID `  --contact-flow-types CONTACT_FLOW `  --query "ContactFlowSummaryList[?Name=='initial_test'].Id" `  --output text
+  21 $Env:BasicChatFlowId = '8d67334e-5583-41d6-89c2-f654ea28c14d'
+  22 aws connect start-chat-contact --instance-id $Env:CONNECT_INSTANCE_ID --contact-flow-id $Env:BasicChatFlowId --participant-details '{"DisplayName":"DevTest"}' --attributes '{"lob":"Bank","service":"credit","name":"era"}'
+  23 $contactId = aws connect start-chat-contact `  --region us-west-2 `  --instance-id $Env:CONNECT_INSTANCE_ID `  --contact-flow-id $flowId `  --participant-details '{\"DisplayName\":\"DevTest\"}' `  --attributes '{\"lob\":\"Bank\",\"service\":\"credit\",\"name\":\"era\"}'...
+  24 $contactId=(aws connect start-chat-contact --region us-west-2 --instance-id $Env:CONNECT_INSTANCE_ID --contact-flow-id $flowId --participant-details '{\"DisplayName\":\"DevTest\"}' --attributes '{\"lob\":\"Bank\",\"service\":\"credit\",\"name\":\"era\"}' | ConvertFrom-J...
+  25 $contactId=(aws connect start-chat-contact --region us-west-2 --instance-id $Env:CONNECT_INSTANCE_ID --contact-flow-id $BasicChatFlowId --participant-details '{\"DisplayName\":\"DevTest\"}' --attributes '{\"lob\":\"Bank\",\"service\":\"credit\",\"name\":\"era\"}' | Conv...
+  26 $Env:BasicChatFlowId = '8d67334e-5583-41d6-89c2-f654ea28c14d'
+  27 $contactId=(aws connect start-chat-contact --region us-west-2 --instance-id $Env:CONNECT_INSTANCE_ID --contact-flow-id $Env:BasicChatFlowId --participant-details '{\"DisplayName\":\"DevTest\"}' --attributes '{\"lob\":\"Bank\",\"service\":\"credit\",\"name\":\"era\"}' | ... 
+  28 aws connect get-contact-attributes --instance-id $Env:CONNECT_INSTANCE_ID --initial-contact-id 5195f518-3b67-4ac5-9050-23e6fb951800
+  29 
+  30 curl -X POST http://localhost:8080/update-attr -H "Content-Type: application/json" -d "{\"contactId\":\"1b3cbad6-661d-4c90-90fe-0f7feee0befe\",\"attributes\":{\"lob\":\"BANK\",\"service\":\"creditIncrease\",\"name\":\"era\"}}"
+  31 aws connect get-contact-attributes --instance-id $Env:CONNECT_INSTANCE_ID --initial-contact-id 1b3cbad6-661d-4c90-90fe-0f7feee0befe
