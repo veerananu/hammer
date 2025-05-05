@@ -1,0 +1,104 @@
+// main_test.go
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"testing"
+
+	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+)
+
+/* ---------- stub client ---------- */
+
+type mockDynamo struct {
+	queryOutputs []*dynamodb.QueryOutput
+	queryInputs  []*dynamodb.QueryInput
+	putInputs    []*dynamodb.PutItemInput
+}
+
+func (m *mockDynamo) Query(ctx context.Context, in *dynamodb.QueryInput, _ ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error) {
+	m.queryInputs = append(m.queryInputs, in)
+	if len(m.queryOutputs) == 0 {
+		return &dynamodb.QueryOutput{}, nil
+	}
+	out := m.queryOutputs[0]
+	m.queryOutputs = m.queryOutputs[1:]
+	return out, nil
+}
+
+func (m *mockDynamo) PutItem(ctx context.Context, in *dynamodb.PutItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error) {
+	m.putInputs = append(m.putInputs, in)
+	return &dynamodb.PutItemOutput{}, nil
+}
+
+/* ---------- helpers ---------- */
+
+func kinesisEvt(payload any) events.KinesisEvent {
+	b, _ := json.Marshal(payload)
+	return events.KinesisEvent{
+		Records: []events.KinesisEventRecord{
+			{Kinesis: events.KinesisRecord{Data: b}},
+		},
+	}
+}
+
+/* ---------- tests ---------- */
+
+func TestLoginStartsAtOne(t *testing.T) {
+	os.Setenv("TABLE_NAME", "AgentCounts")
+	md := &mockDynamo{queryOutputs: []*dynamodb.QueryOutput{
+		{Items: []map[string]types.AttributeValue{}}, // no prior record today
+	}}
+	ddb = md
+
+	err := handler(context.Background(), kinesisEvt(ConnectEvent{EventType: "LOGIN"}))
+	if err != nil {
+		t.Fatalf("handler returned error: %v", err)
+	}
+	if len(md.putInputs) != 1 {
+		t.Fatalf("expected 1 PutItem, got %d", len(md.putInputs))
+	}
+	got := md.putInputs[0].Item["CurrentLoggedIn"].(*types.AttributeValueMemberN).Value
+	if got != "1" {
+		t.Errorf("want CurrentLoggedIn=1, got %s", got)
+	}
+}
+
+func TestLogoutDecrements(t *testing.T) {
+	os.Setenv("TABLE_NAME", "AgentCounts")
+	md := &mockDynamo{queryOutputs: []*dynamodb.QueryOutput{
+		{Items: []map[string]types.AttributeValue{
+			{"CurrentLoggedIn": &types.AttributeValueMemberN{Value: "3"}},
+		}},
+	}}
+	ddb = md
+
+	err := handler(context.Background(), kinesisEvt(ConnectEvent{EventType: "LOGOUT"}))
+	if err != nil {
+		t.Fatalf("handler returned error: %v", err)
+	}
+	got := md.putInputs[0].Item["CurrentLoggedIn"].(*types.AttributeValueMemberN).Value
+	if got != "2" {
+		t.Errorf("want CurrentLoggedIn=2, got %s", got)
+	}
+}
+
+func TestUnknownActionIsSkipped(t *testing.T) {
+	md := &mockDynamo{}
+	ddb = md
+
+	evt := ConnectEvent{
+		EventType: "AGENT_EVENT",
+		AgentEvent: struct {
+			AgentEventType string `json:"AgentEventType"`
+		}{AgentEventType: "PAUSE"},
+	}
+	_ = handler(context.Background(), kinesisEvt(evt))
+	if len(md.putInputs) != 0 {
+		t.Fatalf("expected no writes, got %d", len(md.putInputs))
+	}
+}
