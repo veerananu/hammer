@@ -1,0 +1,336 @@
+package main
+
+import (
+"context"
+"encoding/json"
+"errors"
+"fmt"
+"log"
+"os"
+
+```
+"github.com/aws/aws-lambda-go/events"
+"github.com/aws/aws-lambda-go/lambda"
+"github.com/aws/aws-sdk-go-v2/aws"
+"github.com/aws/aws-sdk-go-v2/config"
+connect "github.com/aws/aws-sdk-go-v2/service/connect"
+connecttypes "github.com/aws/aws-sdk-go-v2/service/connect/types"
+```
+
+)
+
+var (
+instanceID = os.Getenv("CONNECT\_INSTANCE\_ID") // must be set
+// AWS Connect client (interface for easy mocking)
+connClient connectAPI
+)
+
+// Minimal interface we need for UpdateContactAttributes
+type connectAPI interface {
+UpdateContactAttributes(ctx context.Context,
+in \*connect.UpdateContactAttributesInput,
+optFns ...func(\*connect.Options)) (\*connect.UpdateContactAttributesOutput, error)
+}
+
+func init() {
+if instanceID == "" {
+log.Fatal("CONNECT\_INSTANCE\_ID environment variable is not set")
+}
+cfg, err := config.LoadDefaultConfig(context.Background())
+if err != nil {
+log.Fatalf("AWS cfg: %v", err)
+}
+connClient = connect.NewFromConfig(cfg)
+}
+
+// payload schema
+type payload struct {
+ContactID  string            `json:"contactId"`
+Attributes map\[string]string `json:"attributes"`
+}
+
+type respBody struct {
+Updated \[]string `json:"updated,omitempty"`
+Error   string   `json:"error,omitempty"`
+}
+
+// process handles validation and calls Connect API
+func process(ctx context.Context, p payload) (respBody, int) {
+if p.ContactID == "" || len(p.Attributes) == 0 {
+return respBody{Error: "contactId and attributes are required"}, 400
+}
+for k, v := range p.Attributes {
+if v == "" {
+return respBody{Error: fmt.Sprintf("invalid key or empty value: %s", k)}, 400
+}
+}
+
+```
+_, err := connClient.UpdateContactAttributes(ctx, &connect.UpdateContactAttributesInput{
+	InstanceId:       aws.String(instanceID),
+	InitialContactId: aws.String(p.ContactID),
+	Attributes:       p.Attributes,
+})
+if err != nil {
+	var nfe *connecttypes.ResourceNotFoundException
+	if errors.As(err, &nfe) {
+		return respBody{Error: nfe.Error()}, 404
+	}
+	return respBody{Error: err.Error()}, 500
+}
+return respBody{Updated: keys(p.Attributes)}, 200
+```
+
+}
+
+func keys(m map\[string]string) \[]string {
+out := make(\[]string, 0, len(m))
+for k := range m {
+out = append(out, k)
+}
+return out
+}
+
+// Lambda adapter
+func lambdaHandler(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
+var p payload
+if err := json.Unmarshal(\[]byte(req.Body), \&p); err != nil {
+return apiResp(400, respBody{Error: "malformed JSON"}), nil
+}
+resp, code := process(ctx, p)
+return apiResp(code, resp), nil
+}
+
+func apiResp(code int, body respBody) events.APIGatewayV2HTTPResponse {
+j, \_ := json.Marshal(body)
+return events.APIGatewayV2HTTPResponse{
+StatusCode: code,
+Headers:    map\[string]string{"Content-Type": "application/json"},
+Body:       string(j),
+}
+}
+
+func main() {
+lambda.Start(lambdaHandler)
+}
+-------------------------------------------------------------------
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"testing"
+
+	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/connect"
+	"github.com/aws/aws-sdk-go-v2/service/connect/types"
+)
+
+// mockConnect implements connectAPI for testing
+type mockConnect struct {
+	respErr error
+}
+
+func (m *mockConnect) UpdateContactAttributes(ctx context.Context,
+	input *connect.UpdateContactAttributesInput,
+	optFns ...func(*connect.Options)) (*connect.UpdateContactAttributesOutput, error) {
+	if m.respErr != nil {
+		return nil, m.respErr
+	}
+	return &connect.UpdateContactAttributesOutput{}, nil
+}
+
+func TestProcess_Success(t *testing.T) {
+	// setup
+	connClient = &mockConnect{}
+	p := payload{
+		ContactID:  "contact123",
+		Attributes: map[string]string{"foo": "bar"},
+	}
+	// execute
+	resp, code := process(context.Background(), p)
+	// verify
+	if code != 200 {
+		t.Fatalf("expected status 200, got %d", code)
+	}
+	if len(resp.Updated) != 1 || resp.Updated[0] != "foo" {
+		t.Errorf("expected Updated [foo], got %v", resp.Updated)
+	}
+}
+
+func TestProcess_MissingFields(t *testing.T) {
+	tests := []struct {
+		name string
+		p    payload
+	}{
+		{"NoContactID", payload{ContactID: "", Attributes: map[string]string{"a": "b"}}},
+		{"NoAttributes", payload{ContactID: "cid", Attributes: map[string]string{}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, code := process(context.Background(), tc.p)
+			if code != 400 {
+				t.Errorf("expected status 400, got %d", code)
+			}
+			if resp.Error == "" {
+				t.Error("expected non-empty error message")
+			}
+		})
+	}
+}
+
+func TestProcess_EmptyValue(t *testing.T) {
+	p := payload{ContactID: "cid", Attributes: map[string]string{"key": ""}}
+	resp, code := process(context.Background(), p)
+	if code != 400 {
+		t.Fatalf("expected 400, got %d", code)
+	}
+	if resp.Error == "" {
+		t.Error("expected error message for empty value")
+	}
+}
+
+func TestProcess_ResourceNotFound(t *testing.T) {
+	// simulate ResourceNotFoundException
+	err := &types.ResourceNotFoundException{Message: aws.String("not found")}
+	connClient = &mockConnect{respErr: err}
+	p := payload{ContactID: "cid", Attributes: map[string]string{"k": "v"}}
+	resp, code := process(context.Background(), p)
+	if code != 404 {
+		t.Fatalf("expected 404, got %d", code)
+	}
+	if resp.Error != err.Error() {
+		t.Errorf("expected error %q, got %q", err.Error(), resp.Error)
+	}
+}
+
+func TestProcess_OtherError(t *testing.T) {
+	// simulate generic error
+	err := errors.New("something went wrong")
+	connClient = &mockConnect{respErr: err}
+	p := payload{ContactID: "cid", Attributes: map[string]string{"k": "v"}}
+	resp, code := process(context.Background(), p)
+	if code != 500 {
+		t.Fatalf("expected 500, got %d", code)
+	}
+	if resp.Error != err.Error() {
+		t.Errorf("expected error %q, got %q", err.Error(), resp.Error)
+	}
+}
+
+func TestLambdaHandler(t *testing.T) {
+	// setup success case
+	connClient = &mockConnect{}
+	body := payload{ContactID: "cid", Attributes: map[string]string{"k": "v"}}
+	b, _ := json.Marshal(body)
+	event := events.APIGatewayV2HTTPRequest{Body: string(b)}
+	resp, _ := lambdaHandler(context.Background(), event)
+	if resp.StatusCode != 200 {
+		t.Errorf("expected status 200, got %d", resp.StatusCode)
+	}
+	var rb respBody
+	_ = json.Unmarshal([]byte(resp.Body), &rb)
+	if len(rb.Updated) != 1 || rb.Updated[0] != "k" {
+		t.Errorf("expected Updated [k], got %v", rb.Updated)
+	}
+}
+-------------------------------------------------------------------------------------
+
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "UpdateContactAttributesAPI",
+    "version": "1.0"
+  },
+  "paths": {
+    "/update-attr": {
+      "post": {
+        "tags": ["ContactAttributes"],
+        "consumes": ["application/json"],
+        "produces": ["application/json"],
+        "parameters": [
+          {
+            "in": "body",
+            "name": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "required": ["contactId", "attributes"],
+              "properties": {
+                "contactId": { "type": "string" },
+                "attributes": {
+                  "type": "object",
+                  "minProperties": 1,
+                  "additionalProperties": { "type": "string" }
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Attributes updated",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "updated": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "error": { "type": "string" }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "updated": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "error": { "type": "string" }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "updated": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "error": { "type": "string" }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "updated": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "error": { "type": "string" }
+              }
+            }
+          }
+        },
+        "x-amazon-apigateway-integration": {
+          "type": "aws_proxy",
+          "httpMethod": "POST",
+          "uri": "arn:aws:apigateway:{region}:lambda:path/2015-03-31/functions/arn:aws:lambda:{region}:{accountId}:function:{functionName}/invocations",
+          "passthroughBehavior": "when_no_match",
+          "responses": { "default": { "statusCode": "200" } }
+        }
+      }
+    }
+  }
+}
