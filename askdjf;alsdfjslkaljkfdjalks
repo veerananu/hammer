@@ -1,0 +1,10 @@
+variable "connect_alias" {
+  type    = string
+  default = "MyFriendlyAlias"
+}
+
+data "aws_connect_instance" "by_alias" {
+  instance_alias = var.connect_alias
+}
+
+data.aws_connect_instance.by_alias.arn
