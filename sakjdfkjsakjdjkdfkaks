@@ -1,0 +1,114 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
+	"os"
+
+	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	connect "github.com/aws/aws-sdk-go-v2/service/connect"
+	connecttypes "github.com/aws-sdk-go-v2/service/connect/types"
+)
+
+var (
+	instanceID = os.Getenv("CONNECT_INSTANCE_ID") // must be set
+	keyRE      = regexp.MustCompile(`^[A-Za-z0-9_-]{1,256}$`)
+
+	// AWS Connect client (interface for easy mocking)
+	connClient connectAPI
+)
+
+// Minimal interface we need for UpdateContactAttributes
+type connectAPI interface {
+	UpdateContactAttributes(ctx context.Context,
+		in *connect.UpdateContactAttributesInput,
+		optFns ...func(*connect.Options)) (*connect.UpdateContactAttributesOutput, error)
+}
+
+func init() {
+	if instanceID == "" {
+		log.Fatal("CONNECT_INSTANCE_ID environment variable is not set")
+	}
+	cfg, err := config.LoadDefaultConfig(context.Background())
+	if err != nil {
+		log.Fatalf("AWS cfg: %v", err)
+	}
+	connClient = connect.NewFromConfig(cfg)
+}
+
+/* ─── JSON schema ─────────────────────────────────────────────────────────── */
+
+type payload struct {
+	ContactID  string            `json:"contactId"`
+	Attributes map[string]string `json:"attributes"`
+}
+
+type respBody struct {
+	Updated []string `json:"updated,omitempty"`
+	Error   string   `json:"error,omitempty"`
+}
+
+/* ─── Shared validation & business logic ─────────────────────────────────── */
+
+func process(ctx context.Context, p payload) (respBody, int) {
+	if p.ContactID == "" || len(p.Attributes) == 0 {
+		return respBody{Error: "contactId and attributes are required"}, 400
+	}
+	for k, v := range p.Attributes {
+		if !keyRE.MatchString(k) || v == "" {
+			return respBody{Error: fmt.Sprintf("invalid key or empty value: %s", k)}, 400
+		}
+	}
+
+	_, err := connClient.UpdateContactAttributes(ctx, &connect.UpdateContactAttributesInput{
+		InstanceId:       aws.String(instanceID),
+		InitialContactId: aws.String(p.ContactID),
+		Attributes:       p.Attributes,
+	})
+	if err != nil {
+		var nfe *connecttypes.ResourceNotFoundException
+		if errors.As(err, &nfe) {
+			return respBody{Error: nfe.Error()}, 404
+		}
+		return respBody{Error: err.Error()}, 500
+	}
+	return respBody{Updated: keys(p.Attributes)}, 200
+}
+
+func keys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
+/* ─── Lambda adapter ─────────────────────────────────────────────────────── */
+
+func lambdaHandler(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
+	var p payload
+	if err := json.Unmarshal([]byte(req.Body), &p); err != nil {
+		return apiResp(400, respBody{Error: "malformed JSON"}), nil
+	}
+	resp, code := process(ctx, p)
+	return apiResp(code, resp), nil
+}
+
+func apiResp(code int, body respBody) events.APIGatewayV2HTTPResponse {
+	j, _ := json.Marshal(body)
+	return events.APIGatewayV2HTTPResponse{
+		StatusCode: code,
+		Headers:    map[string]string{"Content-Type": "application/json"},
+		Body:       string(j),
+	}
+}
+
+func main() {
+	lambda.Start(lambdaHandler)
+}
