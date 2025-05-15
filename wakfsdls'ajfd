@@ -1,0 +1,35 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::145023115160:role/FirehoseToS3Role"
+      },
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::veeratesting12/*"
+    }
+  ]
+}
+
+
+
+--------------------------
+
+{
+	"Version": "2012-10-17",
+	"Statement": [
+		{
+			"Effect": "Allow",
+			"Action": [
+				"s3:PutObject",
+			],
+			"Resource": "arn:aws:s3:::veeratesting12/*"
+		},
+		{
+			"Effect": "Allow",
+			"Action": "kms:GenerateDataKey",
+			"Resource": "arn:aws:kms:us-east-1:084828565119:key/4207560b-1885-49e2-a4b0-126a7ece845d"
+		}
+	]
+}
