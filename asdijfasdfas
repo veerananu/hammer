@@ -1,0 +1,230 @@
+Assumptions
+Account A: Firehose stream and its KMS key.
+
+Account B: S3 bucket and its KMS key.
+
+You manually exchange key ARNs, role names, and bucket names between the scripts in each account.
+
+You have AWS providers set up for both accounts (you can use two providers if you want to automate cross-account config).
+
+ACCOUNT A: Firehose, KMS Key, IAM Role
+hcl
+Copy
+Edit
+# Account A
+
+provider "aws" {
+  alias  = "a"
+  region = "us-east-1"
+  # profile = "account_a"
+}
+
+# 1. KMS key for Firehose buffer encryption
+resource "aws_kms_key" "firehose_buffer" {
+  description             = "Firehose buffer encryption"
+  deletion_window_in_days = 7
+  provider                = aws.a
+}
+
+# 2. IAM Role for Firehose to deliver to S3 in Account B
+resource "aws_iam_role" "firehose_delivery" {
+  name = "firehose-delivery-role"
+  provider = aws.a
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = { Service = "firehose.amazonaws.com" }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "firehose_policy" {
+  name   = "firehose-policy"
+  role   = aws_iam_role.firehose_delivery.id
+  provider = aws.a
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      # Allow access to Account B's S3 bucket
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:PutObjectAcl",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          "arn:aws:s3:::my-cross-account-bucket",            # <-- Change this
+          "arn:aws:s3:::my-cross-account-bucket/*"           # <-- Change this
+        ]
+      },
+      # Allow use of S3 bucket KMS key in Account B
+      {
+        Effect = "Allow"
+        Action = [
+          "kms:Encrypt",
+          "kms:Decrypt",
+          "kms:GenerateDataKey*",
+          "kms:DescribeKey"
+        ]
+        Resource = "arn:aws:kms:us-east-1:<ACCOUNT_B_ID>:key/<S3_KMS_KEY_ID>" # <-- Change this
+      },
+      # Allow use of Firehose buffer KMS key
+      {
+        Effect = "Allow"
+        Action = [
+          "kms:Encrypt",
+          "kms:Decrypt",
+          "kms:GenerateDataKey*",
+          "kms:DescribeKey"
+        ]
+        Resource = aws_kms_key.firehose_buffer.arn
+      }
+    ]
+  })
+}
+
+# 3. Firehose Delivery Stream
+resource "aws_kinesis_firehose_delivery_stream" "to_cross_account_s3" {
+  name        = "to-cross-account-s3"
+  destination = "s3"
+  provider    = aws.a
+
+  delivery_stream_encryption_configuration {
+    key_type = "CUSTOMER_MANAGED_CMK"
+    key_arn  = aws_kms_key.firehose_buffer.arn
+  }
+
+  s3_configuration {
+    role_arn           = aws_iam_role.firehose_delivery.arn
+    bucket_arn         = "arn:aws:s3:::my-cross-account-bucket" # <-- Change this
+    compression_format = "UNCOMPRESSED"
+    kms_key_arn        = "arn:aws:kms:us-east-1:<ACCOUNT_B_ID>:key/<S3_KMS_KEY_ID>" # <-- Change this
+  }
+}
+ACCOUNT B: S3 Bucket, KMS Key, Policies
+hcl
+Copy
+Edit
+# Account B
+
+provider "aws" {
+  alias  = "b"
+  region = "us-east-1"
+  # profile = "account_b"
+}
+
+# 1. KMS Key for S3 bucket
+resource "aws_kms_key" "s3_bucket" {
+  description             = "S3 bucket encryption"
+  deletion_window_in_days = 7
+  provider                = aws.b
+}
+
+# 2. Allow Firehose role from Account A to use this key
+resource "aws_kms_key_policy" "allow_firehose" {
+  key_id = aws_kms_key.s3_bucket.id
+  provider = aws.b
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AllowAccountBAdmin",
+        Effect = "Allow",
+        Principal = { AWS = "arn:aws:iam::<ACCOUNT_B_ID>:root" },
+        Action = "kms:*",
+        Resource = "*"
+      },
+      {
+        Sid = "AllowFirehoseFromAccountA",
+        Effect = "Allow",
+        Principal = {
+          AWS = "arn:aws:iam::<ACCOUNT_A_ID>:role/firehose-delivery-role" # <-- Change this
+        },
+        Action = [
+          "kms:Encrypt",
+          "kms:Decrypt",
+          "kms:ReEncrypt*",
+          "kms:GenerateDataKey*",
+          "kms:DescribeKey"
+        ],
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+# 3. S3 bucket with default SSE-KMS encryption
+resource "aws_s3_bucket" "cross_account" {
+  bucket   = "my-cross-account-bucket"
+  provider = aws.b
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "default" {
+  bucket   = aws_s3_bucket.cross_account.bucket
+  provider = aws.b
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.s3_bucket.arn
+    }
+  }
+}
+
+# 4. S3 bucket policy allowing Firehose role from Account A to write
+resource "aws_s3_bucket_policy" "allow_firehose" {
+  bucket   = aws_s3_bucket.cross_account.id
+  provider = aws.b
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "AllowFirehosePutObject",
+        Effect   = "Allow",
+        Principal = {
+          AWS = "arn:aws:iam::<ACCOUNT_A_ID>:role/firehose-delivery-role" # <-- Change this
+        },
+        Action = [
+          "s3:PutObject",
+          "s3:PutObjectAcl"
+        ],
+        Resource = "arn:aws:s3:::my-cross-account-bucket/*"
+      },
+      {
+        Sid      = "AllowFirehoseListBucket",
+        Effect   = "Allow",
+        Principal = {
+          AWS = "arn:aws:iam::<ACCOUNT_A_ID>:role/firehose-delivery-role"
+        },
+        Action = "s3:ListBucket",
+        Resource = "arn:aws:s3:::my-cross-account-bucket"
+      }
+    ]
+  })
+}
+Replace all placeholders:
+<ACCOUNT_A_ID> and <ACCOUNT_B_ID> with the actual AWS Account IDs.
+
+<S3_KMS_KEY_ID> with the KMS key ID from Account B for the S3 bucket.
+
+Bucket name and role name where necessary.
+
+Result:
+Data is encrypted at rest in Firehose (Account A).
+
+Data is encrypted in transit (TLS, always).
+
+Data is encrypted at rest in S3 (Account B) with a KMS key.
+
+Let me know if you want two-provider automated wiring or have specific Terraform version constraints!
+
+
