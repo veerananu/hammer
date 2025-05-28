@@ -1,0 +1,21 @@
+Metric Stream (Account A):
+
+CloudWatch in Account A streams metrics via Kinesis Firehose.
+
+The stream is configured to deliver to an S3 bucket in Account B.
+
+Firehose (Account A):
+
+Firehose writes metrics to an S3 bucket in Account B, which is KMS encrypted.
+
+Firehose must have IAM permissions (in Account A) and the KMS key in Account B must allow access.
+
+S3 Trigger (Account B):
+
+When a new object lands in the S3 bucket, it triggers a Lambda function.
+
+Lambda Function (Account B):
+
+Lambda retrieves the object (needs S3 read and KMS decrypt permissions).
+
+It parses the metrics and sends them to an OpenTelemetry collector endpoint
