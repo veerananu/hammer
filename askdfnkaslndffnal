@@ -1,0 +1,486 @@
+package secrets
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"sync"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+)
+
+type secretCache struct {
+	value     string
+	expiresAt time.Time
+}
+
+var (
+	cache      = make(map[string]secretCache)
+	cacheTTL   = 2 * time.Minute
+	cacheMutex sync.RWMutex
+)
+
+// GetSecret returns the secret string and logs exactly one line:
+// either "cache_hit" or "cache_miss".
+func GetSecret(name string) (string, error) {
+	// check cache
+	cacheMutex.RLock()
+	entry, ok := cache[name]
+	cacheMutex.RUnlock()
+
+	if ok && time.Now().Before(entry.expiresAt) {
+		log.Println("cache_hit")
+		return entry.value, nil
+	}
+
+	// miss or expired
+	log.Println("cache_miss")
+
+	// fetch from Secrets Manager
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		return "", fmt.Errorf("load SDK config: %w", err)
+	}
+	svc := secretsmanager.NewFromConfig(cfg)
+	out, err := svc.GetSecretValue(context.TODO(), &secretsmanager.GetSecretValueInput{
+		SecretId: &name,
+	})
+	if err != nil {
+		return "", fmt.Errorf("get secret: %w", err)
+	}
+	if out.SecretString == nil {
+		return "", fmt.Errorf("secret %q has no string value", name)
+	}
+
+	secretString := *out.SecretString
+
+	// Parse JSON to extract the value
+	var secretMap map[string]string
+	if err := json.Unmarshal([]byte(secretString), &secretMap); err != nil {
+		return "", fmt.Errorf("parse secret JSON: %w", err)
+	}
+
+	// Extract the value for the given key
+	secret, exists := secretMap[name]
+	if !exists {
+		return "", fmt.Errorf("key %q not found in secret", name)
+	}
+
+	// cache it
+	cacheMutex.Lock()
+	cache[name] = secretCache{
+		value:     secret,
+		expiresAt: time.Now().Add(cacheTTL),
+	}
+	cacheMutex.Unlock()
+
+	return secret, nil
+}
+
+---------------------------------------------------
+
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"io"
+	"log"
+	"my-lambda-project/internal/config"
+	"my-lambda-project/internal/metrics"
+	"my-lambda-project/internal/s3"
+	"my-lambda-project/internal/secrets"
+	"my-lambda-project/internal/sender"
+	"time"
+
+	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-lambda-go/lambda"
+	jsoniter "github.com/json-iterator/go"
+
+	awsS3 "github.com/aws/aws-sdk-go/service/s3"
+)
+
+var jsonLib = jsoniter.ConfigCompatibleWithStandardLibrary
+var s3FailureCount int
+
+func handler(ctx context.Context, s3Event events.S3Event) error {
+	cfg := config.Load()
+
+	// Retrieve API key from Secrets Manager
+	apiKey, err := secrets.GetSecret(cfg.SecretName)
+	if err != nil {
+		log.Printf("Failed to retrieve API key: %v", err)
+		return err
+	}
+	cfg.APIKey = apiKey
+
+	s3Client, err := s3.GetClient()
+	if err != nil {
+		log.Printf("Failed to initialize S3 client: %v", err)
+		return err
+	}
+
+	for _, record := range s3Event.Records {
+		var inputData []byte
+		var err error
+		bucket := record.S3.Bucket.Name
+		key := record.S3.Object.Key
+
+		resp, err := s3Client.GetObjectWithContext(ctx, &awsS3.GetObjectInput{
+			Bucket: &bucket,
+			Key:    &key,
+		})
+		if err != nil {
+			log.Printf("Failed to get object %s from bucket %s: %v", key, bucket, err)
+			s3FailureCount++
+			continue
+		}
+		defer resp.Body.Close()
+		inputData, err = io.ReadAll(resp.Body)
+		if err != nil {
+			log.Printf("Failed to read object %s: %v", key, err)
+			s3FailureCount++
+			continue
+		}
+
+		var inputs []metrics.InputMetric
+		trimmedData := bytes.TrimSpace(inputData)
+		if len(trimmedData) > 0 && trimmedData[0] == '[' {
+			if err := jsonLib.Unmarshal(inputData, &inputs); err != nil {
+				log.Printf("Error parsing JSON array: %v", err)
+				continue
+			}
+		} else {
+			scanner := bufio.NewScanner(bytes.NewReader(inputData))
+			for scanner.Scan() {
+				line := scanner.Bytes()
+				if len(bytes.TrimSpace(line)) == 0 {
+					continue
+				}
+				var metric metrics.InputMetric
+				if err := jsonLib.Unmarshal(line, &metric); err != nil {
+					log.Printf("Error parsing JSON object: %v", err)
+					continue
+				}
+				inputs = append(inputs, metric)
+			}
+			if err := scanner.Err(); err != nil {
+				log.Printf("Error reading metrics: %v", err)
+				continue
+			}
+		}
+
+		resultChan := make(chan metrics.ResourceMetrics, cfg.ResultChanSize)
+		flushInterval := 10 * time.Second
+
+		batchChan, done := sender.Sender(ctx, resultChan, cfg, cfg.BatchSize, flushInterval)
+		workersDone := sender.StartWorkers(ctx, batchChan, cfg, cfg.NumWorkers)
+
+		startTime := time.Now()
+		metrics.ConvertToOTEL(ctx, inputs, resultChan)
+		log.Printf("Processed %d metrics. Time taken: %v. Failed S3 records: %d", len(inputs), time.Since(startTime), s3FailureCount)
+
+		<-done
+		<-workersDone
+
+		err = s3.AddObjectTag(s3Client, bucket, key)
+		if err != nil {
+			log.Printf("Error updating object status for %s/%s: %v", bucket, key, err)
+		} else {
+			log.Printf("Successfully updated object status for %s/%s", bucket, key)
+		}
+	}
+	return nil
+}
+
+func main() {
+	lambda.Start(handler)
+}
+-------------------
+package config
+
+import (
+	"os"
+	"strconv"
+	"time"
+)
+
+const (
+	// Default values
+	DefaultNumWorkers     = 20
+	DefaultBatchSize      = 200
+	DefaultMaxRetries     = 3
+	DefaultBackoff        = 1 * time.Second
+	DefaultBackoffMult    = 2.0
+	DefaultOTELEndpoint   = "http://167.71.85.187:4318/v1/metrics"
+	DefaultResultChanSize = 1000
+	DefaultBatchChanSize  = 50
+	DefaultSecretName     = "my-secret"
+)
+
+// Config holds application configuration loaded from environment variables.
+type Config struct {
+	PrintJSON      bool
+	NumWorkers     int
+	BatchSize      int
+	OTELEndpoint   string
+	ResultChanSize int
+	BatchChanSize  int
+	MaxRetries     int
+	Backoff        time.Duration
+	BackoffMult    float64
+	SecretName     string
+	APIKey         string
+}
+
+// Load reads environment variables and returns a Config instance.
+func Load() *Config {
+	cfg := &Config{}
+
+	// PRINT_JSON
+	cfg.PrintJSON, _ = strconv.ParseBool(os.Getenv("PRINT_JSON"))
+
+	// NUM_WORKERS
+	if n, err := strconv.Atoi(os.Getenv("NUM_WORKERS")); err == nil && n > 0 {
+		cfg.NumWorkers = n
+	} else {
+		cfg.NumWorkers = DefaultNumWorkers
+	}
+
+	// BATCH_SIZE
+	if b, err := strconv.Atoi(os.Getenv("BATCH_SIZE")); err == nil && b > 0 {
+		cfg.BatchSize = b
+	} else {
+		cfg.BatchSize = DefaultBatchSize
+	}
+
+	// OTEL_ENDPOINT
+	if endpoint := os.Getenv("OTEL_ENDPOINT"); endpoint != "" {
+		cfg.OTELEndpoint = endpoint
+	} else {
+		cfg.OTELEndpoint = DefaultOTELEndpoint
+	}
+
+	// RESULT_CHAN_SIZE
+	if rcs, err := strconv.Atoi(os.Getenv("RESULT_CHAN_SIZE")); err == nil && rcs > 0 {
+		cfg.ResultChanSize = rcs
+	} else {
+		cfg.ResultChanSize = DefaultResultChanSize
+	}
+
+	// BATCH_CHAN_SIZE
+	if bcs, err := strconv.Atoi(os.Getenv("BATCH_CHAN_SIZE")); err == nil && bcs > 0 {
+		cfg.BatchChanSize = bcs
+	} else {
+		cfg.BatchChanSize = DefaultBatchChanSize
+	}
+
+	// SECRET_NAME
+	if secretName := os.Getenv("SECRET_NAME"); secretName != "" {
+		cfg.SecretName = secretName
+	} else {
+		cfg.SecretName = DefaultSecretName
+	}
+
+	cfg.MaxRetries = DefaultMaxRetries
+	cfg.Backoff = DefaultBackoff
+	cfg.BackoffMult = DefaultBackoffMult
+
+	return cfg
+}
+-------------------------------------
+
+package sender
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io/ioutil"
+	"log"
+	"math"
+	"net/http"
+	"os"
+	"time"
+
+	"my-lambda-project/internal/config"
+	"my-lambda-project/internal/metrics"
+
+	jsoniter "github.com/json-iterator/go"
+)
+
+var jsonLib = jsoniter.ConfigCompatibleWithStandardLibrary
+
+var client = &http.Client{
+	Timeout: 10 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 30,
+	},
+}
+
+func Sender(ctx context.Context, resultChan <-chan metrics.ResourceMetrics, cfg *config.Config, batchSize int, flushInterval time.Duration) (<-chan []metrics.ResourceMetrics, <-chan struct{}) {
+	batchChan := make(chan []metrics.ResourceMetrics, cfg.BatchChanSize)
+	done := make(chan struct{})
+
+	go func() {
+		batch := make([]metrics.ResourceMetrics, 0, batchSize)
+		timer := time.NewTimer(flushInterval)
+		defer func() {
+			if len(batch) > 0 {
+				batchChan <- batch
+			}
+			timer.Stop()
+			close(batchChan)
+			close(done)
+		}()
+
+		for {
+			select {
+			case rm, ok := <-resultChan:
+				if !ok {
+					return
+				}
+				if cfg.PrintJSON {
+					wrapped := metrics.ExportMetricsServiceRequest{
+						ResourceMetrics: []metrics.ResourceMetrics{rm},
+					}
+					jsonMetric, err := jsonLib.MarshalIndent(wrapped, "", "  ")
+					if err != nil {
+						log.Printf("Error marshaling metric: %v", err)
+					} else {
+						log.Printf("Sender received metric:\n%s", string(jsonMetric))
+					}
+				} else {
+					log.Printf("Sender received metric: %v", rm)
+				}
+				batch = append(batch, rm)
+				if len(batch) >= batchSize {
+					batchChan <- batch
+					batch = make([]metrics.ResourceMetrics, 0, batchSize)
+					if !timer.Stop() {
+						<-timer.C
+					}
+					timer.Reset(flushInterval)
+				}
+			case <-timer.C:
+				if len(batch) > 0 {
+					batchChan <- batch
+					batch = make([]metrics.ResourceMetrics, 0, batchSize)
+				}
+				timer.Reset(flushInterval)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	return batchChan, done
+}
+
+func StartWorkers(ctx context.Context, batchChan <-chan []metrics.ResourceMetrics, cfg *config.Config, numWorkers int) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < numWorkers; i++ {
+			go worker(ctx, batchChan, cfg)
+		}
+	}()
+	return done
+}
+
+func worker(ctx context.Context, batchChan <-chan []metrics.ResourceMetrics, cfg *config.Config) {
+	for {
+		select {
+		case batch, ok := <-batchChan:
+			if !ok {
+				return
+			}
+			log.Printf("Worker: received batch of length %d", len(batch))
+			sendBatch(ctx, batch, cfg)
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func sendBatch(ctx context.Context, batch []metrics.ResourceMetrics, cfg *config.Config) {
+	requestData := metrics.ExportMetricsServiceRequest{
+		ResourceMetrics: batch,
+	}
+
+	fullPayload, err := jsonLib.MarshalIndent(requestData, "", "  ")
+	if err != nil {
+		log.Printf("Error marshaling full OTEL payload: %v", err)
+	} else {
+		log.Printf("FULL OTEL PAYLOAD:\n%s", string(fullPayload))
+		fmt.Println("FULL OTEL PAYLOAD:")
+		fmt.Println(string(fullPayload))
+	}
+
+	jsonData, err := jsonLib.Marshal(requestData)
+	if err != nil {
+		log.Printf("Error marshaling JSON for sending: %v", err)
+		return
+	}
+
+	if os.Getenv("LOCAL_TEST") == "true" {
+		log.Printf("LOCAL_TEST mode: Would send full payload:\n%s", string(fullPayload))
+		return
+	}
+
+	for attempt := 0; attempt <= cfg.MaxRetries; attempt++ {
+		select {
+		case <-ctx.Done():
+			log.Printf("Send cancelled: %v", ctx.Err())
+			return
+		default:
+		}
+
+		req, err := http.NewRequestWithContext(ctx, "POST", cfg.OTELEndpoint, bytes.NewBuffer(jsonData))
+		if err != nil {
+			log.Printf("Error creating request: %v", err)
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		// Use the API key from config, if present
+		if cfg.APIKey != "" {
+			req.Header.Set("X-API-Key", cfg.APIKey) // Change header name if needed
+		}
+
+		log.Printf("Attempt %d to send full payload", attempt+1)
+		resp, err := client.Do(req)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			log.Printf("Successfully sent full payload with %d ResourceMetrics", len(batch))
+			if resp != nil {
+				resp.Body.Close()
+			}
+			return
+		}
+
+		if resp != nil {
+			body, _ := ioutil.ReadAll(resp.Body)
+			resp.Body.Close()
+			log.Printf("Attempt %d: received status %d. Response: %s", attempt+1, resp.StatusCode, string(body))
+		} else {
+			log.Printf("Attempt %d failed: %v", attempt+1, err)
+		}
+
+		if attempt < cfg.MaxRetries {
+			backoff := cfg.Backoff * time.Duration(math.Pow(cfg.BackoffMult, float64(attempt)))
+			log.Printf("Retrying in %v...", backoff)
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				log.Printf("Send cancelled during backoff: %v", ctx.Err())
+				return
+			}
+		} else {
+			log.Printf("Failed to send payload after %d attempts", cfg.MaxRetries+1)
+		}
+	}
+}
