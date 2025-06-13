@@ -1,0 +1,118 @@
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"io"
+	"log"
+	"my-lambda-project/internal/config"
+	"my-lambda-project/internal/metrics"
+	"my-lambda-project/internal/s3"
+	"my-lambda-project/internal/secrets"
+	"my-lambda-project/internal/sender"
+	"time"
+
+	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-lambda-go/lambda"
+	jsoniter "github.com/json-iterator/go"
+
+	awsS3 "github.com/aws/aws-sdk-go/service/s3"
+)
+
+var jsonLib = jsoniter.ConfigCompatibleWithStandardLibrary
+var s3FailureCount int
+
+func handler(ctx context.Context, s3Event events.S3Event) error {
+	cfg := config.Load()
+
+	// Retrieve API key from Secrets Manager
+	apiKey, err := secrets.GetSecret(cfg.SecretName)
+	if err != nil {
+		log.Printf("Failed to retrieve API key: %v", err)
+		return err
+	}
+	cfg.APIKey = apiKey
+
+	s3Client, err := s3.GetClient()
+	if err != nil {
+		log.Printf("Failed to initialize S3 client: %v", err)
+		return err
+	}
+
+	for _, record := range s3Event.Records {
+		var inputData []byte
+		var err error
+		bucket := record.S3.Bucket.Name
+		key := record.S3.Object.Key
+
+		resp, err := s3Client.GetObjectWithContext(ctx, &awsS3.GetObjectInput{
+			Bucket: &bucket,
+			Key:    &key,
+		})
+		if err != nil {
+			log.Printf("Failed to get object %s from bucket %s: %v", key, bucket, err)
+			s3FailureCount++
+			continue
+		}
+		defer resp.Body.Close()
+		inputData, err = io.ReadAll(resp.Body)
+		if err != nil {
+			log.Printf("Failed to read object %s: %v", key, err)
+			s3FailureCount++
+			continue
+		}
+
+		var inputs []metrics.InputMetric
+		trimmedData := bytes.TrimSpace(inputData)
+		if len(trimmedData) > 0 && trimmedData[0] == '[' {
+			if err := jsonLib.Unmarshal(inputData, &inputs); err != nil {
+				log.Printf("Error parsing JSON array: %v", err)
+				continue
+			}
+		} else {
+			scanner := bufio.NewScanner(bytes.NewReader(inputData))
+			for scanner.Scan() {
+				line := scanner.Bytes()
+				if len(bytes.TrimSpace(line)) == 0 {
+					continue
+				}
+				var metric metrics.InputMetric
+				if err := jsonLib.Unmarshal(line, &metric); err != nil {
+					log.Printf("Error parsing JSON object: %v", err)
+					continue
+				}
+				inputs = append(inputs, metric)
+			}
+			if err := scanner.Err(); err != nil {
+				log.Printf("Error reading metrics: %v", err)
+				continue
+			}
+		}
+
+		resultChan := make(chan metrics.ResourceMetrics, cfg.ResultChanSize)
+		flushInterval := 10 * time.Second
+
+		batchChan, done := sender.Sender(ctx, resultChan, cfg, cfg.BatchSize, flushInterval)
+		workersDone := sender.StartWorkers(ctx, batchChan, cfg, cfg.NumWorkers)
+
+		startTime := time.Now()
+		metrics.ConvertToOTEL(ctx, inputs, resultChan)
+		log.Printf("Processed %d metrics. Time taken: %v. Failed S3 records: %d", len(inputs), time.Since(startTime), s3FailureCount)
+
+		<-done
+		<-workersDone
+
+		err = s3.AddObjectTag(s3Client, bucket, key)
+		if err != nil {
+			log.Printf("Error updating object status for %s/%s: %v", bucket, key, err)
+		} else {
+			log.Printf("Successfully updated object status for %s/%s", bucket, key)
+		}
+	}
+	return nil
+}
+
+func main() {
+	lambda.Start(handler)
+}
