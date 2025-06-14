@@ -1,0 +1,122 @@
+package secrets
+
+import (
+	"fmt"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+// MockGetSecret is a mock implementation of GetSecret that avoids AWS calls.
+var MockGetSecret func(name string) (string, error)
+
+func TestGetSecret_MockedCacheHit(t *testing.T) {
+	// Clear cache before test
+	cacheMutex.Lock()
+	cache = make(map[string]secretCache)
+	cacheMutex.Unlock()
+
+	secretName := "test-secret"
+	secretValue := "test-api-key"
+
+	// Manually add to cache
+	cacheMutex.Lock()
+	cache[secretName] = secretCache{
+		value:     secretValue,
+		expiresAt: time.Now().Add(5 * time.Minute),
+	}
+	cacheMutex.Unlock()
+
+	// Set up mock function
+	MockGetSecret = func(name string) (string, error) {
+		return "", fmt.Errorf("should not be called")
+	}
+
+	// Call GetSecret
+	result, err := GetSecret(secretName)
+
+	// Verify results
+	if err != nil {
+		t.Errorf("Expected no error, got: %v", err)
+	}
+	if result != secretValue {
+		t.Errorf("Expected %s, got %s", secretValue, result)
+	}
+}
+
+func TestGetSecret_MockedCacheMiss(t *testing.T) {
+	// Clear cache before test
+	cacheMutex.Lock()
+	cache = make(map[string]secretCache)
+	cacheMutex.Unlock()
+
+	secretName := "test-secret"
+	secretValue := "mocked-api-key"
+
+	// Set up mock function
+	MockGetSecret = func(name string) (string, error) {
+		if name == secretName {
+			return secretValue, nil
+		}
+		return "", fmt.Errorf("secret not found")
+	}
+
+	// Override the real GetSecret with the mock
+	originalGetSecret := GetSecret
+	GetSecret = MockGetSecret
+	defer func() {
+		GetSecret = originalGetSecret
+	}()
+
+	// Call GetSecret
+	result, err := GetSecret(secretName)
+
+	// Verify results
+	if err != nil {
+		t.Errorf("Expected no error, got: %v", err)
+	}
+	if result != secretValue {
+		t.Errorf("Expected %s, got %s", secretValue, result)
+	}
+}
+
+func TestGetSecret_MockedError(t *testing.T) {
+	// Clear cache before test
+	cacheMutex.Lock()
+	cache = make(map[string]secretCache)
+	cacheMutex.Unlock()
+
+	secretName := "test-secret"
+	expectedError := "mocked error"
+
+	// Set up mock function
+	MockGetSecret = func(name string) (string, error) {
+		return "", fmt.Errorf(expectedError)
+	}
+
+	// Override the real GetSecret with the mock
+	originalGetSecret := GetSecret
+	GetSecret = MockGetSecret
+	defer func() {
+		GetSecret = originalGetSecret
+	}()
+
+	// Call GetSecret
+	_, err := GetSecret(secretName)
+
+	// Verify results
+	if err == nil {
+		t.Errorf("Expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), expectedError) {
+		t.Errorf("Expected error to contain %s, got %v", expectedError, err)
+	}
+}
+
+func TestCacheTTL(t *testing.T) {
+	// Test that cache TTL is set correctly
+	if cacheTTL != 2*time.Minute {
+		t.Errorf("Expected cache TTL to be 2 minutes, got %v", cacheTTL)
+	}
+}
