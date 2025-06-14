@@ -1,0 +1,5 @@
+// Mock the secrets.GetSecret function
+func mockGetSecret(name string) (string, error) {
+	// Return a mock API key instead of calling AWS
+	return "mock-api-key-12345", nil
+}
