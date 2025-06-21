@@ -1,0 +1,42 @@
+Monitoring SaaS Applications Hosted on AWS: What to Ask and Expect
+1. What You Need to Monitor (as a SaaS Consumer)
+As a SaaS customer, your focus is on the service level and application performance—not the underlying AWS infrastructure. Key areas to monitor or request visibility into:
+
+Availability/Uptime: Is the application accessible and responsive?
+Performance: Are response times within acceptable limits? Any slowdowns?
+Error Rates: Are there failed requests, errors, or outages?
+Security Events: Any unauthorized access attempts, data breaches, or vulnerabilities?
+Usage Metrics: How much of your quota or subscription are you using (API calls, storage, user seats)?
+Compliance: Are they meeting compliance requirements (SOC2, GDPR, HIPAA, etc.)?
+Incident Reporting: How and when will you be notified of incidents or outages?
+2. What Metrics Should the SaaS Provider Share?
+Request a Service Level Agreement (SLA) and regular reporting on:
+
+Uptime/Availability: Monthly uptime percentage, downtime incidents, and root cause analysis.
+Latency/Performance: Average and percentile response times for key operations.
+Error Rates: Number and types of errors (e.g., 4xx, 5xx HTTP errors).
+Security Metrics: Summary of security incidents, patching status, and audit logs (if applicable).
+Capacity/Usage: Your usage stats (API calls, storage, user activity).
+Maintenance Windows: Advance notice of planned maintenance and expected impact.
+Compliance Reports: Copies of compliance certifications or audit summaries.
+3. How Will They Share These Metrics?
+Customer Portal/Dashboard: Real-time and historical metrics.
+API Access: For integration with your own monitoring tools.
+Email/Reports: Regular (weekly/monthly) email reports or downloadable PDFs.
+Incident Notifications: Email, SMS, or webhook notifications for outages or incidents.
+Support Channels: For ad-hoc queries or incident follow-up.
+4. Questions to Ask Your SaaS Provider
+What is your SLA for uptime and response time?
+How do you monitor your own infrastructure and application health?
+What metrics and logs can you share with us, and how often?
+How will you notify us of incidents, outages, or security events?
+Can we access a real-time dashboard or API for monitoring?
+What compliance certifications do you maintain, and can you share audit reports?
+How do you handle data backups and disaster recovery?
+What is your process for planned maintenance and customer notification?
+5. What You Don’t Need to Monitor
+You do not need to monitor:
+
+VPC, subnets, firewalls, or load balancers directly (that’s the provider’s job)
+Underlying AWS resource health (EC2, RDS, etc.)
+Internal network traffic or security group rules
