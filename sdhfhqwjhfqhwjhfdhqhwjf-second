@@ -1,0 +1,45 @@
+Mapping Performance Metrics to Your Architecture
+1. Response Time (Latency)
+Relevant Services:
+Application Load Balancer (ALB) in VPC-2
+Presentation Tier (WFM server, Nice Data Explorer, ASC web server)
+Application Tier (WFM app server, ASC)
+API endpoints exposed by the SaaS app
+What to Ask:
+Average and percentile response times for user logins, dashboard loads, report generation, and API calls.
+2. Throughput
+Relevant Services:
+Application Load Balancer (ALB)
+Presentation and Application Tiers (all app servers)
+What to Ask:
+Maximum and average requests per second/minute/hour handled by the ALB and app servers.
+3. Error Rate
+Relevant Services:
+Application Load Balancer (ALB)
+All app servers (WFM, ASC, Nice Data Explorer)
+What to Ask:
+Error rates for user/API requests, broken down by type (4xx, 5xx, timeouts, authentication errors).
+4. Application Availability
+Relevant Services:
+Entire SaaS application (end-to-end, including ALB, app servers, and database)
+What to Ask:
+Uptime percentage for the whole service, and for critical endpoints (login, data access, reporting).
+Outage history and root cause analysis.
+5. Resource Utilization
+Relevant Services:
+API endpoints (rate limits)
+Storage (database usage, file storage if applicable)
+User sessions (concurrent users)
+What to Ask:
+Your current usage vs. quota for API calls, storage, and user seats.
+6. User Experience Metrics
+Relevant Services:
+Web front-end (Presentation Tier: WFM server, Nice Data Explorer, ASC web server)
+What to Ask:
+Page load times, TTFB, and transaction completion times for key workflows.
+7. Scalability
+Relevant Services:
+Application Load Balancer and all app servers
+What to Ask:
+Results of load testing, and whether performance degrades under high load.
+How the system scales during peak usage.
