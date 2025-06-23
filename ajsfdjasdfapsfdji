@@ -1,0 +1,114 @@
+Application Performance & Availability
+Uptime/SLA metrics - Overall application availability percentage
+Response times - End-to-end latency for key user workflows
+Error rates - HTTP 4xx/5xx errors, application exceptions
+Transaction success rates - Critical business process completion rates
+Load balancer health - Target health, connection counts, latency
+Infrastructure Health
+Database performance - Query response times, connection pool utilization, deadlocks
+Server resource utilization - CPU, memory, disk usage across all tiers
+Network performance - Inter-VPC communication latency, packet loss
+Auto-scaling events - Instance launches/terminations, scaling triggers
+Security Monitoring
+WAF metrics - Blocked requests, attack patterns, rule violations
+Authentication/authorization - Failed login attempts, privilege escalations
+Data access patterns - Unusual database queries, data export activities
+Security incidents - Breach attempts, vulnerability exploits
+Business-Critical Metrics
+User session metrics - Concurrent users, session duration
+Feature-specific KPIs - WFM scheduling accuracy, data processing volumes
+Data integrity - Backup success rates, data validation errors
+Compliance status - Audit trail completeness, regulatory requirement adherence
+Operational Visibility
+Deployment status - Release schedules, rollback events
+Maintenance windows - Planned downtime notifications
+Capacity planning - Resource utilization trends, growth projections
+Incident response - MTTR, escalation procedures, root cause analysis
+-----------------------------------------------------------------------------------------
+1. Security VPC (VPC-1) Monitoring
+A. Web Application Firewall (WAF) & Firewall
+Blocked/Allowed Requests:
+Shows if attacks (like SQL injection, XSS) are being stopped or if legitimate users are being blocked by mistake.
+Top Offending IPs:
+Helps identify sources of repeated attacks or abuse.
+Rule Triggers:
+Which WAF/firewall rules are being triggered most often? This can show new attack patterns or misconfigurations.
+B. Application Load Balancer (ALB)
+Request Count:
+How many requests are coming in? Sudden spikes can mean attacks or increased usage.
+HTTP Error Rates (4xx, 5xx):
+High error rates can mean app bugs, misconfigurations, or attacks.
+Target Health:
+Are your backend servers healthy and able to serve traffic?
+Latency:
+How long does it take to respond to requests? High latency means slow user experience.
+C. Internet Gateway
+Traffic Volume:
+Monitor for unusual spikes in inbound/outbound traffic, which could indicate data exfiltration or DDoS attacks.
+2. Application VPC (VPC-2) Monitoring
+A. Presentation Tier (Subnet-1)
+Server Health (WFM, Data Explorer, ASC Web):
+CPU, Memory, Disk Usage: High usage can cause slowness or crashes.
+Network In/Out: Unusual spikes can mean attacks or data leaks.
+Application Logs: Track errors, warnings, and user activity.
+Application Load Balancer (if present):
+Same metrics as above: request count, error rates, latency, target health.
+B. Application Tier (Subnet-2)
+App Server Health (WFM App, ASC):
+CPU, Memory, Disk: Watch for resource exhaustion.
+Application Logs: Look for failed transactions, slow queries, or exceptions.
+API Metrics: Number of API calls, error rates, response times.
+C. Data Tier (Subnet-3)
+Database (RDS):
+CPU, Memory, Storage: High usage can slow down or crash the database.
+Read/Write Latency: Slow reads/writes mean slow apps.
+Connection Count: Too many connections can exhaust resources.
+Replication Lag: If using replicas, lag can cause stale data.
+Backup Status: Ensure backups are happening and are successful.
+Disk IOPS: High IOPS can indicate heavy usage or inefficient queries.
+3. General SaaS Metrics
+Per-Tenant Usage:
+Active Users: How many users are using the system?
+API Calls: How much is each tenant using the system?
+Storage Used: How much data is each tenant storing?
+Cost/Billing: How much is each tenant costing you (for chargeback or showback)?
+Availability/Uptime:
+Service Uptime: Are your services available as promised?
+Downtime/Incidents: Track outages and their causes.
+Security Events:
+Failed Logins: Could indicate brute-force attacks.
+Unusual Access Patterns: Logins from new locations, times, or devices.
+4. Why Monitor These Metrics?
+Proactive Problem Detection:
+Find and fix issues before users notice.
+Security:
+Detect and respond to attacks or breaches.
+Performance:
+Ensure users have a fast, reliable experience.
+Cost Control:
+Avoid surprise bills and optimize resource usage.
+Compliance:
+Meet regulatory requirements for logging and monitoring.
+Capacity Planning:
+Know when to scale up or down.
+5. How to Monitor
+AWS CloudWatch:
+Native AWS service for collecting and visualizing metrics, logs, and alarms.
+AWS CloudTrail:
+For auditing API calls and user actions.
+Third-Party Tools:
+Datadog, New Relic, Splunk, etc., for advanced dashboards and alerting.
+Custom Dashboards:
+For per-tenant visibility and reporting.
+Summary Table
+Component	Metric	Why Monitor?
+WAF/Firewall	Blocked requests, top IPs	Detect attacks, tune rules
+Load Balancer	Requests, errors, latency	User experience, detect failures
+Servers (all tiers)	CPU, memory, disk, network	Prevent crashes, plan scaling
+Application Logs	Errors, warnings, user actions	Debugging, security, compliance
+Database (RDS)	CPU, storage, latency, backups	Data integrity, performance, recovery
+Per-tenant Usage	API calls, storage, cost	Billing, cost control, capacity
+Security Events	Failed logins, access patterns	Detect breaches, compliance
+Uptime/Availability	Service health, downtime	SLA compliance, reliability
+If you want, I can show you how to set up CloudWatch alarms for any of these, or give you a sample dashboard layout! Just let me know what helps you most.
+-----------------------------------------------
