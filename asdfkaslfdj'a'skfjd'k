@@ -1,0 +1,80 @@
+Absolutely! Based on your architecture (two VPCs: Security VPC with WAF/ALB, Application VPC with web/app servers and RDS database), here’s a clear list of metrics/reports you should reasonably expect your SaaS vendor to share with you, and why:
+
+Metrics You Should Request (and Why) for Your Architecture
+1. Security VPC (WAF, Firewall, ALB)
+Service/Component	Metrics/Reports You Should Get	Why?
+WAF / Firewall	- Summary of attacks blocked
+- Security incidents affecting your tenant	To know about threats or breaches
+Application Load Balancer	- Uptime (availability for your users)
+- Error rates (4xx/5xx for your tenant’s traffic)
+- Average response times for your requests
+- Outage/incident reports	To measure app health for your users
+
+2. Application VPC (Web/App Servers, RDS)
+Service/Component	Metrics/Reports You Should Get	Why?
+Web/App Servers (WFM, NICE Data Explorer, ASC)	- User activity (logins, sessions, API calls for your tenant)
+- Feature usage
+- Application uptime for your tenant
+- Application performance (response times, errors impacting your users)	To monitor adoption, support, and experience
+Database (RDS)	- Amount of data your tenant is storing
+- Confirmation of backups for your tenant’s data
+- Data-related incidents that affected your tenant (e.g., failed queries, corruption, restore events)	For billing, compliance, and data integrity
+
+3. General SaaS/Tenant Metrics
+Area	Metrics/Reports You Should Get	Why?
+Availability/Uptime	- Uptime % for your tenant
+- Downtime or incident/outage reports	Ensure reliability, meet SLAs
+Performance	- Response time/error rates for your users	User experience
+Security	- Failed logins, suspicious logins for your users
+- Security alerts or incident reports impacting your org	Security awareness
+Usage	- Active users, API calls, feature adoption	Billing/planning
+Storage	- Data stored for your tenant	Billing/compliance
+Backup/Disaster Recovery	- Confirmation of backups/retention policy for your tenant’s data
+- DR test outcomes (sometimes)	Data protection, compliance
+Support	- Support ticket response/resolution times
+- Notifications of planned changes or releases	Transparency, support quality
+Compliance	- Audit logs (for your tenant), compliance certifications	Meet regulatory requirements
+
+What You Should NOT Expect:
+Raw AWS logs/metrics (CloudWatch for ALB/RDS/WAF/servers)
+
+Backend server CPU/disk/network stats
+
+Full firewall logs or traffic captures
+
+Data/metrics about other tenants
+
+How Will These Be Shared?
+Dashboards: Most SaaS vendors provide a portal for real-time and historical metrics.
+
+Scheduled Reports: Monthly/weekly PDF or CSV summaries.
+
+Alerts: Email/SMS/in-app notifications for outages, incidents, or critical security events.
+
+API: Some SaaS vendors provide APIs for you to fetch your usage/performance/security data.
+
+Why Only These?
+Security: Protects your data and other tenants’ data.
+
+Relevance: Only shows you what matters for your business and compliance.
+
+SaaS Model: Backend infrastructure is managed by the vendor, so only filtered/tenant-specific info is surfaced.
+
+Summary Table for Your Architecture
+Service	What You Get	How Shared
+WAF/Firewall	Attack summaries, tenant-specific incidents	Dashboard, email
+ALB	Uptime, error rates, latency (your traffic only)	Dashboard, report
+Web/App Servers	Usage/activity by your users, app uptime for your tenant	Dashboard
+RDS (Database)	Your data usage, backup confirmation, data incidents	Report, compliance doc
+General SaaS	Usage, storage, security events, incidents, support stats	Dashboard, report
+
+If you need a sample email to request these metrics from your vendor, or want to see a dashboard layout/mockup, just ask!
+
+
+
+
+
+
+
+
+
