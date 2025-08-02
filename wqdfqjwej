@@ -1,0 +1,33 @@
+[12:15 PM, 8/2/2025] Veera: # Add your OpenAI API key here (optional - can also enter in UI)
+OPENAI_API_KEY = "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"
+
+# Optional: Pre-configure Aurora connection
+[aurora]
+host = "database-1.cluster-cf0a8sqiilge.us-west-2.rds.amazonaws.com"
+username = "admin"
+password = "admin123admin"
+database = "testvdb"
+[12:32 PM, 8/2/2025] Veera: https://app.pluralsight.com/library/
+[1:29 PM, 8/2/2025] Veera: "How many employees are there in total?"
+
+"Show me all active employees."
+
+"List all employees in the Production department."
+
+"What is the average salary of all employees?"
+
+"How many male and female employees are there?"
+
+"List employees with an employee satisfaction score of 5."
+
+"What is the average salary for each department?"
+
+"How many employees are in each marital status category?"
+
+"Who are the top 5 highest paid employees?"
+
+"List all employees in Sales who have a performance score."
+
+"Calculate the total number of absences for each department."
+
+"Count employees by their recruitment source."
