@@ -1,0 +1,2 @@
+.securityContext(securityContext -> securityContext
+    .securityContextRepository(new RequestAttributeSecurityContextRepository()))
