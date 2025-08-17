@@ -1,0 +1,32 @@
+@Component
+public class VirtualThreadSecurityContextFilter extends OncePerRequestFilter {
+    
+    @Override
+    protected void doFilterInternal(HttpServletRequest request,
+                                  HttpServletResponse response,
+                                  FilterChain filterChain) throws ServletException, IOException {
+        
+        SecurityContext contextBefore = SecurityContextHolder.getContext();
+        
+        // ADD LOGGING
+        System.out.println("BEFORE: Auth = " + 
+            (contextBefore.getAuthentication() != null ? 
+             contextBefore.getAuthentication().getName() : "NULL"));
+        
+        try {
+            filterChain.doFilter(request, response);
+        } finally {
+            SecurityContext contextAfter = SecurityContextHolder.getContext();
+            
+            // ADD LOGGING
+            System.out.println("AFTER: Auth = " + 
+                (contextAfter.getAuthentication() != null ? 
+                 contextAfter.getAuthentication().getName() : "NULL"));
+            
+            if (contextBefore != null && contextBefore.getAuthentication() != null) {
+                SecurityContextHolder.setContext(contextBefore);
+                System.out.println("RESTORED: Auth = " + contextBefore.getAuthentication().getName());
+            }
+        }
+    }
+}
