@@ -1,0 +1,43 @@
+@Component
+public class VirtualThreadSecurityContextFilter extends OncePerRequestFilter {
+    
+    @Autowired
+    private AuthenticationManager authenticationManager;
+    
+    @Autowired
+    private AuthenticationConverter authenticationConverter;
+    
+    @Override
+    protected void doFilterInternal(HttpServletRequest request,
+                                  HttpServletResponse response,
+                                  FilterChain filterChain) throws ServletException, IOException {
+        
+        SecurityContext contextBefore = SecurityContextHolder.getContext();
+        
+        // If no valid authentication, try to authenticate
+        if (contextBefore.getAuthentication() == null || 
+            "anonymousUser".equals(contextBefore.getAuthentication().getName())) {
+            
+            try {
+                // Try to extract and authenticate from request
+                Authentication authRequest = authenticationConverter.convert(request);
+                if (authRequest != null) {
+                    Authentication authentication = authenticationManager.authenticate(authRequest);
+                    SecurityContext newContext = SecurityContextHolder.createEmptyContext();
+                    newContext.setAuthentication(authentication);
+                    SecurityContextHolder.setContext(newContext);
+                    
+                    // Save to request attributes
+                    RequestAttributeSecurityContextRepository repo = new RequestAttributeSecurityContextRepository();
+                    repo.saveContext(newContext, request, response);
+                    
+                    System.out.println("RE-AUTHENTICATED: " + authentication.getName());
+                }
+            } catch (Exception e) {
+                System.out.println("Re-authentication failed: " + e.getMessage());
+            }
+        }
+        
+        filterChain.doFilter(request, response);
+    }
+}
