@@ -1,0 +1,6 @@
+public VirtualThreadSecurityContextFilter(
+            AuthenticationManager authenticationManager,
+            AuthenticationConverter authenticationConverter) {
+        this.authenticationManager = authenticationManager;
+        this.authenticationConverter = authenticationConverter;
+    }
