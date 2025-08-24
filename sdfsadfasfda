@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AWS Data Validation Architecture</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background: #f5f5f5;
+        }
+        .diagram-container {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            overflow-x: auto;
+        }
+        .component {
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .component:hover {
+            opacity: 0.8;
+            transform: scale(1.02);
+        }
+        .tooltip {
+            position: absolute;
+            background: #333;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            z-index: 1000;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        .legend {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 5px;
+            border: 1px solid #dee2e6;
+        }
+        .legend h3 {
+            margin-top: 0;
+            color: #495057;
+        }
+        .flow-step {
+            display: inline-block;
+            margin: 5px 10px;
+            padding: 5px 10px;
+            background: #e3f2fd;
+            border-radius: 15px;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="diagram-container">
+        <svg viewBox="0 0 1400 1000" xmlns="http://www.w3.org/2000/svg">
+            <!-- Background -->
+            <rect width="1400" height="1000" fill="#f8f9fa"/>
+            
+            <!-- Title -->
+            <text x="700" y="30" font-size="28" font-weight="bold" text-anchor="middle" fill="#212529">
+                AWS Data Validation System Architecture
+            </text>
+            
+            <!-- User Layer -->
+            <g class="component" data-tooltip="Users access the system through web browsers">
+                <rect x="50" y="70" width="200" height="100" fill="#FF9900" rx="8" stroke="#e67e22" stroke-width="2"/>
+                <text x="150" y="95" font-size="16" font-weight="bold" text-anchor="middle" fill="white">👥 Users</text>
+                <rect x="70" y="110" width="160" height="40" fill="white" rx="5"/>
+                <text x="150" y="135" font-size="14" text-anchor="middle" fill="#333">Web Browser</text>
+            </g>
+            
+            <!-- CloudFront -->
+            <g class="component" data-tooltip="CloudFront CDN provides global content delivery and caching">
+                <rect x="300" y="70" width="200" height="100" fill="#8B4789" rx="8" stroke="#7b3f73" stroke-width="2"/>
+                <text x="400" y="95" font-size="16" font-weight="bold" text-anchor="middle" fill="white">☁️ CloudFront</text>
+                <rect x="320" y="110" width="160" height="40" fill="white" rx="5"/>
+                <text x="400" y="135" font-size="12" text-anchor="middle" fill="#333">CDN Distribution</text>
+            </g>
+            
+            <!-- S3 Frontend -->
+            <g class="component" data-tooltip="S3 bucket hosts the React frontend as a static website">
+                <rect x="550" y="70" width="200" height="100" fill="#569A31" rx="8" stroke="#4a8629" stroke-width="2"/>
+                <text x="650" y="95" font-size="16" font-weight="bold" text-anchor="middle" fill="white">🪣 S3 Bucket</text>
+                <rect x="570" y="110" width="160" height="40" fill="white" rx="5"/>
+                <text x="650" y="135" font-size="12" text-anchor="middle" fill="#333">React Frontend</text>
+            </g>
+            
+            <!-- API Gateway -->
+            <g class="component" data-tooltip="API Gateway handles REST API requests with authentication">
+                <rect x="800" y="70" width="200" height="100" fill="#FF9900" rx="8" stroke="#e67e22" stroke-width="2"/>
+                <text x="900" y="95" font-size="16" font-weight="bold" text-anchor="middle" fill="white">🚪 API Gateway</text>
+                <rect x="820" y="110" width="160" height="40" fill="white" rx="5"/>
+                <text x="900" y="130" font-size="10" text-anchor="middle" fill="#333">GET /jobs, POST /validate</text>
+                <text x="900" y="145" font-size="10" text-anchor="middle" fill="#333">GET /results/{id}</text>
+            </g>
+            
+            <!-- Cognito -->
+            <g class="component" data-tooltip="AWS Cognito manages user authentication and authorization">
+                <rect x="1050" y="70" width="200" height="100" fill="#C925D1" rx="8" stroke="#b520bc" stroke-width="2"/>
+                <text x="1150" y="95" font-size="16" font-weight="bold" text-anchor="middle" fill="white">🔐 Cognito</text>
+                <rect x="1070" y="110" width="160" height="40" fill="white" rx="5"/>
+                <text x="1150" y="135" font-size="12" text-anchor="middle" fill="#333">Authentication</text>
+            </g>
+            
+            <!-- VPC Boundary -->
+            <rect x="50" y="220" width="1300" height="350" fill="none" stroke="#007bff" stroke-width="3" stroke-dasharray="10,5" rx="10"/>
+            <text x="70" y="210" font-size="16" font-weight="bold" fill="#007bff">🏢 AWS VPC (Virtual Private Cloud)</text>
+            
+            <!-- Public Subnet -->
+            <rect x="80" y="240" width="280" height="80" fill="rgba(76, 144, 226, 0.1)" stroke="#4c90e2" stroke-width="2" stroke-dasharray="5,3" rx="5"/>
+            <text x="90" y="235" font-size="12" font-weight="bold" fill="#4c90e2">Public Subnets</text>
+            
+            <!-- NAT Gateway -->
+            <g class="component" data-tooltip="NAT Gateway provides internet access for Lambda functions in private subnets">
+                <rect x="100" y="260" width="110" height="50" fill="#4A90E2" rx="5" stroke="#3a7bc8" stroke-width="1"/>
+                <text x="155" y="280" font-size="11" font-weight="bold" text-anchor="middle" fill="white">🌐 NAT</text>
+                <text x="155" y="295" font-size="9" text-anchor="middle" fill="white">Gateway</text>
+            </g>
+            
+            <!-- Internet Gateway -->
+            <g class="component" data-tooltip="Internet Gateway provides public internet access">
+                <rect x="230" y="260" width="110" height="50" fill="#4A90E2" rx="5" stroke="#3a7bc8" stroke-width="1"/>
+                <text x="285" y="280" font-size="11" font-weight="bold" text-anchor="middle" fill="white">🔗 Internet</text>
+                <text x="285" y="295" font-size="9" text-anchor="middle" fill="white">Gateway</text>
+            </g>
+            
+            <!-- Private Subnet -->
+            <rect x="80" y="340" width="1250" height="210" fill="rgba(231, 76, 60, 0.1)" stroke="#e74c3c" stroke-width="2" stroke-dasharray="5,3" rx="5"/>
+            <text x="90" y="335" font-size="12" font-weight="bold" fill="#e74c3c">Private Subnets (Secure Zone)</text>
+            
+            <!-- Lambda Function -->
+            <g class="component" data-tooltip="Single Lambda function handles all data validation logic in Go runtime">
+                <rect x="200" y="370" width="600" height="80" fill="#FF9900" rx="8" stroke="#e67e22" stroke-width="2"/>
+                <text x="500" y="395" font-size="18" font-weight="bold" text-anchor="middle" fill="white">⚡ Lambda Function</text>
+                <rect x="220" y="405" width="560" height="35" fill="white" rx="5"/>
+                <text x="500" y="425" font-size="14" text-anchor="middle" fill="#333">data-validation-service (Go Runtime)</text>
+                <text x="500" y="440" font-size="10" text-anchor="middle" fill="#666">Job Selection • Query Execution • Data Comparison • Report Generation • Notifications</text>
+            </g>
+            
+            <!-- VPC Endpoints -->
+            <g class="component" data-tooltip="VPC Endpoints provide private access to AWS services">
+                <rect x="850" y="370" width="140" height="60" fill="#9B59B6" rx="5" stroke="#8e44ad" stroke-width="1"/>
+                <text x="920" y="390" font-size="11" font-weight="bold" text-anchor="middle" fill="white">🔗 VPC</text>
+                <text x="920" y="405" font-size="11" font-weight="bold" text-anchor="middle" fill="white">Endpoints</text>
+                <text x="920" y="420" font-size="9" text-anchor="middle" fill="white">Private AWS Access</text>
+            </g>
+            
+            <!-- Step Functions -->
+            <g class="component" data-tooltip="Step Functions orchestrate complex workflows (optional)">
+                <rect x="1050" y="370" width="140" height="60" fill="#E7157B" rx="5" stroke="#d81b60" stroke-width="1"/>
+                <text x="1120" y="390" font-size="11" font-weight="bold" text-anchor="middle" fill="white">🔄 Step</text>
+                <text x="1120" y="405" font-size="11" font-weight="bold" text-anchor="middle" fill="white">Functions</text>
+                <text x="1120" y="420" font-size="9" text-anchor="middle" fill="white">Workflow Engine</text>
+            </g>
+            
+            <!-- AWS Services Row -->
+            <text x="100" y="490" font-size="14" font-weight="bold" fill="#495057">AWS Managed Services:</text>
+            
+            <!-- DynamoDB -->
+            <g class="component" data-tooltip="DynamoDB stores validation results and job configurations">
+                <rect x="100" y="500" width="150" height="80" fill="#4B612C" rx="5" stroke="#3d4f23" stroke-width="1"/>
+                <text x="175" y="520" font-size="12" font-weight="bold" text-anchor="middle" fill="white">🗃️ DynamoDB</text>
+                <text x="175" y="535" font-size="9" text-anchor="middle" fill="white">Validation Results</text>
+                <text x="175" y="550" font-size="9" text-anchor="middle" fill="white">Job Configurations</text>
+                <text x="175" y="565" font-size="9" text-anchor="middle" fill="white">Session State</text>
+            </g>
+            
+            <!-- Secrets Manager -->
+            <g class="component" data-tooltip="Secrets Manager securely stores database credentials and API keys">
+                <rect x="280" y="500" width="150" height="80" fill="#DD344C" rx="5" stroke="#c62d42" stroke-width="1"/>
+                <text x="355" y="520" font-size="12" font-weight="bold" text-anchor="middle" fill="white">🔑 Secrets</text>
+                <text x="355" y="535" font-size="9" text-anchor="middle" fill="white">DB Credentials</text>
+                <text x="355" y="550" font-size="9" text-anchor="middle" fill="white">API Keys</text>
+                <text x="355" y="565" font-size="9" text-anchor="middle" fill="white">VPN Keys</text>
+            </g>
+            
+            <!-- Parameter Store -->
+            <g class="component" data-tooltip="Parameter Store manages configuration settings and query templates">
+                <rect x="460" y="500" width="150" height="80" fill="#759C3E" rx="5" stroke="#658834" stroke-width="1"/>
+                <text x="535" y="520" font-size="12" font-weight="bold" text-anchor="middle" fill="white">⚙️ Parameter</text>
+                <text x="535" y="535" font-size="9" text-anchor="middle" fill="white">Query Templates</text>
+                <text x="535" y="550" font-size="9" text-anchor="middle" fill="white">Job Parameters</text>
+                <text x="535" y="565" font-size="9" text-anchor="middle" fill="white">Config Settings</text>
+            </g>
+            
+            <!-- S3 Reports -->
+            <g class="component" data-tooltip="S3 bucket stores validation reports and evidence files">
+                <rect x="640" y="500" width="150" height="80" fill="#569A31" rx="5" stroke="#4a8629" stroke-width="1"/>
+                <text x="715" y="520" font-size="12" font-weight="bold" text-anchor="middle" fill="white">📄 S3 Reports</text>
+                <text x="715" y="535" font-size="9" text-anchor="middle" fill="white">CSV/PDF Reports</text>
+                <text x="715" y="550" font-size="9" text-anchor="middle" fill="white">Evidence Files</text>
+                <text x="715" y="565" font-size="9" text-anchor="middle" fill="white">Backup Data</text>
+            </g>
+            
+            <!-- Monitoring Services -->
+            <g class="component" data-tooltip="CloudWatch provides comprehensive monitoring and alerting">
+                <rect x="820" y="500" width="120" height="80" fill="#759C3E" rx="5" stroke="#658834" stroke-width="1"/>
+                <text x="880" y="520" font-size="11" font-weight="bold" text-anchor="middle" fill="white">📊 CloudWatch</text>
+                <text x="880" y="535" font-size="8" text-anchor="middle" fill="white">Metrics & Logs</text>
+                <text x="880" y="550" font-size="8" text-anchor="middle" fill="white">Dashboards</text>
+                <text x="880" y="565" font-size="8" text-anchor="middle" fill="white">Alarms</text>
+            </g>
+            
+            <!-- SNS -->
+            <g class="component" data-tooltip="SNS sends notifications via email, SMS, and Slack">
+                <rect x="970" y="500" width="120" height="80" fill="#E7157B" rx="5" stroke="#d81b60" stroke-width="1"/>
+                <text x="1030" y="520" font-size="11" font-weight="bold" text-anchor="middle" fill="white">📢 SNS</text>
+                <text x="1030" y="535" font-size="8" text-anchor="middle" fill="white">Email</text>
+                <text x="1030" y="550" font-size="8" text-anchor="middle" fill="white">SMS</text>
+                <text x="1030" y="565" font-size="8" text-anchor="middle" fill="white">Slack</text>
+            </g>
+            
+            <!-- EventBridge -->
+            <g class="component" data-tooltip="EventBridge schedules automated validation jobs">
+                <rect x="1120" y="500" width="120" height="80" fill="#FF9900" rx="5" stroke="#e67e22" stroke-width="1"/>
+                <text x="1180" y="520" font-size="11" font-weight="bold" text-anchor="middle" fill="white">⏰ EventBridge</text>
+                <text x="1180" y="535" font-size="8" text-anchor="middle" fill="white">Scheduler</text>
+                <text x="1180" y="550" font-size="8" text-anchor="middle" fill="white">Daily Jobs</text>
+                <text x="1180" y="565" font-size="8" text-anchor="middle" fill="white">Triggers</text>
+            </g>
+            
+            <!-- On-Premises Section -->
+            <rect x="50" y="630" width="1300" height="160" fill="#FFF8DC" stroke="#8B4513" stroke-width="3" rx="10"/>
+            <text x="70" y="620" font-size="16" font-weight="bold" fill="#8B4513">🏢 On-Premises Data Center</text>
+            
+            <!-- VPN Connection -->
+            <g class="component" data-tooltip="VPN Gateway provides secure encrypted connection to on-premises">
+                <rect x="100" y="650" width="180" height="70" fill="#8B4513" rx="5" stroke="#7a3d0f" stroke-width="1"/>
+                <text x="190" y="670" font-size="12" font-weight="bold" text-anchor="middle" fill="white">🔒 VPN Gateway</text>
+                <text x="190" y="685" font-size="10" text-anchor="middle" fill="white">/ Direct Connect</text>
+                <text x="190" y="700" font-size="9" text-anchor="middle" fill="white">Secure Tunnel to AWS</text>
+            </g>
+            
+            <!-- MySQL Database -->
+            <g class="component" data-tooltip="On-premises MySQL database containing batch audit data">
+                <rect x="320" y="650" width="200" height="70" fill="#146EB4" rx="5" stroke="#0f5a95" stroke-width="1"/>
+                <text x="420" y="670" font-size="12" font-weight="bold" text-anchor="middle" fill="white">🗄️ MySQL Database</text>
+                <text x="420" y="685" font-size="10" text-anchor="middle" fill="white">Batch Audit Data</text>
+                <text x="420" y="700" font-size="9" text-anchor="middle" fill="white">Job Execution Logs</text>
+            </g>
+            
+            <!-- PostgreSQL Database -->
+            <g class="component" data-tooltip="On-premises PostgreSQL database with production data">
+                <rect x="560" y="650" width="200" height="70" fill="#146EB4" rx="5" stroke="#0f5a95" stroke-width="1"/>
+                <text x="660" y="670" font-size="12" font-weight="bold" text-anchor="middle" fill="white">🗄️ PostgreSQL DB</text>
+                <text x="660" y="685" font-size="10" text-anchor="middle" fill="white">Production Data</text>
+                <text x="660" y="700" font-size="9" text-anchor="middle" fill="white">Business Records</text>
+            </g>
+            
+            <!-- Legacy Systems -->
+            <g class="component" data-tooltip="Legacy systems and file storage">
+                <rect x="800" y="650" width="150" height="70" fill="#8B4513" rx="5" stroke="#7a3d0f" stroke-width="1"/>
+                <text x="875" y="670" font-size="11" font-weight="bold" text-anchor="middle" fill="white">📁 Legacy</text>
+                <text x="875" y="685" font-size="11" font-weight="bold" text-anchor="middle" fill="white">Systems</text>
+                <text x="875" y="700" font-size="9" text-anchor="middle" fill="white">File Archives</text>
+            </g>
+            
+            <!-- Monitoring Server -->
+            <g class="component" data-tooltip="On-premises monitoring and logging systems">
+                <rect x="990" y="650" width="150" height="70" fill="#759C3E" rx="5" stroke="#658834" stroke-width="1"/>
+                <text x="1065" y="670" font-size="11" font-weight="bold" text-anchor="middle" fill="white">📈 Monitoring</text>
+                <text x="1065" y="685" font-size="10" text-anchor="middle" fill="white">System Logs</text>
+                <text x="1065" y="700" font-size="9" text-anchor="middle" fill="white">Database Metrics</text>
+            </g>
+            
+            <!-- Connection Arrows -->
+            <defs>
+                <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+                    <polygon points="0 0, 10 3.5, 0 7" fill="#495057"/>
+                </marker>
+                <marker id="bluearrow" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+                    <polygon points="0 0, 10 3.5, 0 7" fill="#007bff"/>
+                </marker>
+            </defs>
+            
+            <!-- User Flow Arrows -->
+            <line x1="250" y1="120" x2="300" y2="120" stroke="#495057" stroke-width="2" marker-end="url(#arrowhead)"/>
+            <line x1="500" y1="120" x2="550" y2="120" stroke="#495057" stroke-width="2" marker-end="url(#arrowhead)"/>
+            <line x1="750" y1="120" x2="800" y2="120" stroke="#495057" stroke-width="2" marker-end="url(#arrowhead)"/>
+            <line x1="1000" y1="120" x2="1050" y2="120" stroke="#495057" stroke-width="2" marker-end="url(#arrowhead)"/>
+            
+            <!-- API Gateway to Lambda -->
+            <line x1="900" y1="170" x2="900" y2="190" stroke="#495057" stroke-width="2"/>
+            <line x1="500" y1="190" x2="900" y2="190" stroke="#495057" stroke-width="2"/>
+            <line x1="500" y1="190" x2="500" y2="370" stroke="#495057" stroke-width="2" marker-end="url(#arrowhead)"/>
+            
+            <!-- NAT Gateway Connection -->
+            <line x1="210" y1="285" x2="230" y2="285" stroke="#007bff" stroke-width="2" marker-end="url(#bluearrow)"/>
+            
+            <!-- Lambda to AWS Services -->
+            <line x1="400" y1="450" x2="175" y2="480" stroke="#495057" stroke-width="2"/>
+            <line x1="175" y1="480" x2="175" y2="500" stroke="#495057" stroke-width="2" marker-end="url(#arrowhead)"/>
+            
+            <line x1="450" y1="450" x2="355" y2="480" stroke="#495057" stroke-width="2"/>
+            <line x1="355" y1="480" x2="355" y2="500" stroke="#495057" stroke-width="2" marker-end="url(#arrowhead)"/>
+            
+            <line x1="500" y1="450" x2="535" y2="480" stroke="#495057" stroke-width="2"/>
+            <line x1="535" y1="480" x2="535" y2="500" stroke="#495057" stroke-width="2" marker-end="url(#arrowhead)"/>
+            
+            <line x1="600" y1="450" x2="715" y2="480" stroke="#495057" stroke-width="2"/>
+            <line x1="715" y1="480" x2="715" y2="500" stroke="#495057" stroke-width="2" marker-end="url(#arrowhead)"/>
+            
+            <!-- VPN Connection -->
+            <line x1="190" y1="570" x2="190" y2="650" stroke="#8B4513" stroke-width="3" marker-end="url(#arrowhead)"/>
+            
+            <!-- Lambda to On-Premises Databases -->
+            <line x1="400" y1="450" x2="400" y2="620" stroke="#146EB4" stroke-width="2"/>
+            <line x1="400" y1="620" x2="420" y2="620" stroke="#146EB4" stroke-width="2"/>
+            <line x1="420" y1="620" x2="420" y2="650" stroke="#146EB4" stroke-width="2" marker-end="url(#arrowhead)"/>
+            
+            <line x1="600" y1="450" x2="600" y2="620" stroke="#146EB4" stroke-width="2"/>
+            <line x1="600" y1="620" x2="660" y2="620" stroke="#146EB4" stroke-width="2"/>
+            <line x1="660" y1="620" x2="660" y2="650" stroke="#146EB4" stroke-width="2" marker-end="url(#arrowhead)"/>
+            
+            <!-- Monitoring and Notifications -->
+            <line x1="700" y1="450" x2="880" y2="480" stroke="#759C3E" stroke-width="2"/>
+            <line x1="880" y1="480" x2="880" y2="500" stroke="#759C3E" stroke-width="2" marker-end="url(#arrowhead)"/>
+            
+            <line x1="750" y1="450" x2="1030" y2="480" stroke="#E7157B" stroke-width="2"/>
+            <line x1="1030" y1="480" x2="1030" y2="500" stroke="#E7157B" stroke-width="2" marker-end="url(#arrowhead)"/>
+            
+            <!-- EventBridge to Lambda -->
+            <line x1="1180" y1="500" x2="1180" y2="460" stroke="#FF9900" stroke-width="2"/>
+            <line x1="1180" y1="460" x2="600" y2="460" stroke="#FF9900" stroke-width="2"/>
+            <line x1="600" y1="460" x2="600" y2="450" stroke="#FF9900" stroke-width="2" marker-end="url(#arrowhead)"/>
+            
+            <!-- Data Flow Indicators -->
+            <text x="700" y="850" font-size="16" font-weight="bold" text-anchor="middle" fill="#495057">📊 Data Flow Process</text>
+            <text x="700" y="870" font-size="12" text-anchor="middle" fill="#6c757d">
+                1. User → CloudFront → S3 → API Gateway → Cognito (Auth)
+            </text>
+            <text x="700" y="890" font-size="12" text-anchor="middle" fill="#6c757d">
+                2. API → Lambda (VPC) → On-Premises DB → Validation Logic
+            </text>
+            <text x="700" y="910" font-size="12" text-anchor="middle" fill="#6c757d">
+                3. Results → DynamoDB + S3 → Notifications → Dashboard
+            </text>
+            
+        </svg>
+        
+        <div class="tooltip" id="tooltip"></div>
+    </div>
+    
+    <div class="legend">
+        <h3>🎯 Key Features of This Architecture</h3>
+        <div class="flow-step">🔒 Secure VPC Isolation</div>
+        <div class="flow-step">⚡ Serverless Auto-scaling</div>
+        <div class="flow-step">🏢 On-Premises Integration</div>
+        <div class="flow-step">📊 Comprehensive Monitoring</div>
+        <div class="flow-step">💰 Cost-Optimized</div>
+        
+        <h3 style="margin-top: 20px;">💡 How to Use This Diagram</h3>
+        <ul style="margin: 10px 0; padding-left: 20px;">
+            <li><strong>Hover over components</strong> to see detailed descriptions</li>
+            <li><strong>Follow the arrows</strong> to understand data flow</li>
+            <li><strong>Right-click and save</strong> to download as image for Confluence</li>
+            <li><strong>Screenshot this page</strong> for presentations</li>
+        </ul>
+        
+        <h3 style="margin-top: 20px;">🚀 For Confluence Implementation</h3>
+        <ol style="margin: 10px 0; padding-left: 20px;">
+            <li>Right-click on the diagram above → "Save image as" → Save as PNG</li>
+            <li>Open your Confluence page → Click "Edit"</li>
+            <li>Drag and drop the PNG file into Confluence</li>
+            <li>Add title: "AWS Data Validation System Architecture"</li>
+            <li>Click "Publish"</li>
+        </ol>
+    </div>
+
+    <script>
+        // Tooltip functionality
+        const tooltip = document.getElementById('tooltip');
+        const components = document.querySelectorAll('.component');
+        
+        components.forEach(component => {
+            component.addEventListener('mouseenter', (e) => {
+                const tooltipText = component.getAttribute('data-tooltip');
+                if (tooltipText) {
+                    tooltip.textContent = tooltipText;
+                    tooltip.style.opacity = '1';
+                }
+            });
+            
+            component.addEventListener('mousemove', (e) => {
+                tooltip.style.left = e.pageX + 10 + 'px';
+                tooltip.style.top = e.pageY - 10 + 'px';
+            });
+            
+            component.addEventListener('mouseleave', () => {
+                tooltip.style.opacity = '0';
+            });
+        });
+        
+        // Click to highlight connections
+        components.forEach(component => {
+            component.addEventListener('click', () => {
+                // Remove previous highlights
+                components.forEach(c => c.style.filter = '');
+                
+                // Highlight clicked component
+                component.style.filter = 'drop-shadow(0 0 10px #007bff)';
+                
+                // Auto-remove highlight after 3 seconds
+                setTimeout(() => {
+                    component.style.filter = '';
+                }, 3000);
+            });
+        });
+    </script>
+</body>
+</html>
