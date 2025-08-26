@@ -1,0 +1,38 @@
+Complete Technology Stack for Data Integration System
+Core Technology Stack
+CategoryTechnologyVersionPurposeWhy This ChoiceProgramming LanguagePython3.11+Core development languageBest data ecosystem, extensive libraries, easier maintenanceOrchestrationApache Airflow2.8.0+Workflow management & schedulingProduction-grade, visual monitoring, built-in retry/error handlingData ProcessingPolars0.20.0+High-speed DataFrame operations10-100x faster than Pandas, handles 7M records efficientlyIn-Memory AnalyticsDuckDB0.10.0+SQL-based CDC operationsFast in-memory SQL engine for complex comparisonsShared State StoreRedis7.2+Inter-process data sharingFast cache for 7M records, enables parallel processingMemory FormatApache Arrow15.0.0+Zero-copy data sharingEfficient memory usage between processes
+
+Data Processing Libraries
+CategoryTechnologyVersionPurposeWhy This ChoiceData ValidationPydantic2.5.0+Data model validationType safety, automatic validationDate/Time HandlingPendulum3.0.0+Timezone-aware datetime opsBetter than native datetimeParallel ProcessingmultiprocessingBuilt-inCPU-bound parallel tasksNative Python, no external dependenciesAsync OperationsasyncioBuilt-inI/O-bound concurrent opsDatabase query parallelizationData SerializationPyArrow15.0.0+Fast serializationEfficient Redis storage
+
+
+
+
+
+Kubernetes (unless already using)
+Spark (overkill for 7M records)
+Microservices architecture
+RetryVif we use javaEditComplete Technology Stack for Data Integration System (Java Version)
+Core Technology Stack - Java
+CategoryTechnologyVersionPurposeWhy This ChoiceProgramming LanguageJava17 LTS or 21 LTSCore development languageEnterprise standard, strong typing, excellent performanceBuild ToolGradle8.5+Build and dependency managementBetter than Maven for complex projects, flexibleFrameworkSpring Boot3.2.0+Application frameworkIndustry standard, extensive ecosystemOrchestrationApache Airflow2.8.0+Workflow managementStill use Airflow (call Java JARs)Alternative OrchestrationSpring Batch + Quartz5.1.0 + 2.3.2Java-native batch processingPure Java solution, no Python needed
+Data Processing Stack - Java
+CategoryTechnologyVersionPurposeWhy This Choice (vs Python)DataFrame ProcessingApache Spark (Java API)3.5.0+Large-scale data processingHandles 7M records, distributed processingLightweight AlternativeTablesaw0.43.1+In-memory DataFramesPandas-like for Java, lighter than SparkStream ProcessingJava Streams APIBuilt-inData transformationsNative Java 8+, no dependenciesCDC ProcessingDebezium Engine2.4+Change data captureProduction-grade CDC libraryIn-Memory DatabaseH2 Database2.2.224+SQL operations for CDCEmbedded SQL engine (DuckDB equivalent)Cache/State StoreRedis + Jedis/LettuceRedis 7.2 + Lettuce 6.3+Shared state managementHigh-performance Redis clientAlternative CacheHazelcast5.3+In-memory data gridPure Java solution, no Redis needed
+Database Connectivity Stack - Java
+CategoryTechnologyVersionPurposeJava AdvantageSnowflake ConnectorSnowflake JDBC3.14.0+Snowflake accessNative JDBC supportPostgreSQL DriverPostgreSQL JDBC42.7.0+NICE/WFM database accessMature JDBC driverConnection PoolingHikariCP5.1.0+Connection pool managementFastest connection pool for JavaORM FrameworkHibernate/JPA6.4.0+Object-relational mappingEnterprise standardDatabase MigrationFlyway10.0+Schema versioningDatabase version controlQuery BuilderJOOQ3.19+Type-safe SQLCompile-time SQL validation
+Spring Boot Modules Stack
+CategoryTechnologyVersionPurposeConfigurationSpring Data JPAspring-boot-starter-data-jpa3.2.0+Database operationsSimplified data accessSpring Batchspring-boot-starter-batch3.2.0+Batch processingChunk-based processing for 7M recordsSpring Integrationspring-integration-core6.2.0+Enterprise integrationData pipeline patternsSpring Retryspring-retry2.0.4+Retry logicAutomatic retry with backoffSpring Actuatorspring-boot-starter-actuator3.2.0+Monitoring endpointsHealth checks, metricsSpring Validationspring-boot-starter-validation3.2.0+Data validationBean validation
+Performance & Memory Management - Java
+CategoryTechnologyVersionPurposeJava-Specific BenefitMemory-Mapped FilesJava NIO MappedByteBufferBuilt-inLarge file processingEfficient 7M record handlingOff-Heap StorageChronicle Map3.24+Off-heap memory storageBypass JVM heap limitationsSerializationApache Avro1.11.3+Fast serializationSchema evolution supportAlternativeKryo5.5.0+Fastest Java serialization10x faster than Java serializationCompressionSnappy-Java1.1.10+Fast compressionReduce memory footprintParallel ProcessingForkJoinPoolBuilt-inParallel executionWork-stealing algorithmReactive StreamsProject Reactor3.6.0+Async non-blocking I/OBackpressure handling
+Java-Specific Monitoring Stack
+CategoryTechnologyVersionPurposeJava IntegrationJVM MonitoringJMX + JConsoleBuilt-inJVM metricsNative Java monitoringAPMJava Flight RecorderBuilt-inProduction profilingZero-overhead profilingMetrics LibraryMicrometer1.12.0+Metrics abstractionSpring Boot integrationDistributed TracingZipkin + Brave2.24+Request tracingTrace across servicesLoggingSLF4J + Logback2.0.9 + 1.4.14Structured loggingStandard Java loggingGC LoggingG1GC/ZGC LogsJVM flagsGarbage collection tuningMemory optimization
+Testing Stack - Java
+CategoryTechnologyVersionPurposeJava BenefitUnit TestingJUnit 55.10.1+Unit testsIndustry standardMockingMockito5.7.0+Mock objectsEasy mockingIntegration TestingSpring Boot Test3.2.0+Integration testsFull context testingBDD TestingCucumber-Java7.15.0+Behavior-driven testsBusiness-readable testsPerformance TestingJMH1.37+MicrobenchmarksAccurate performance measurementTest ContainersTestcontainers1.19.3+Database testingReal database in DockerCode CoverageJaCoCo0.8.11+Coverage reportsIntegrated with build tools
+Build & Deployment - Java
+CategoryTechnologyVersionPurposeConfigurationJVMOpenJDK/GraalVM17 or 21 LTSRuntimeGraalVM for native imageContainerDocker + JibJib 3.4.0+Container buildingBuild without Docker daemonJAR PackagingShadow/Fat JARGradle Shadow 8.0+Executable JARAll dependencies includedNative CompilationGraalVM Native Image23.1+Native executable50MB binary, fast startupCI/CDJenkins/GitLab CILatestBuild pipelineJava ecosystem integration
+Java vs Python Technology Comparison
+AspectJava ChoicePython ChoiceJava AdvantageJava DisadvantageData ProcessingApache SparkPolarsDistributed processingMore complex setupIn-Memory SQLH2 DatabaseDuckDBMature, embeddedLess analytical featuresCDCDebeziumCustom PythonEnterprise-gradeHeavier footprintOrchestrationSpring BatchAirflowType-safe, integratedLess visual monitoringMemory ManagementOff-heap (Chronicle)ArrowPredictable memoryManual managementParallelismForkJoinPoolmultiprocessingTrue threadingComplex tuning
+Architecture Patterns - Java Specific
+PatternImplementationUse CaseBenefitBatch ProcessingSpring Batch ChunksProcess 7M recordsMemory efficient, restartableRepository PatternSpring Data RepositoriesData access layerClean separationStrategy PatternCDC StrategiesDifferent CDC logicPluggable algorithmsObserver PatternSpring EventsAudit loggingDecoupled componentsCircuit BreakerResilience4jDatabase failuresFault toleranceSaga PatternSpring State MachineComplex workflowsTransaction management
+Memory Configuration for 7M Records
+JVM ParameterValuePurposeJustification-Xmx32GMax heapProcess large datasets-Xms32GInitial heapAvoid resizing-XX:MaxDirectMemorySize16GOff-heap memoryNIO buffers-XX:+UseG1GCEnabledGarbage collectorLow pause times-XX:MaxGCPauseMillis200GC pause targetPredictable latency-XX:+UseStringDeduplicationEnabledString dedupMemory savings
+Complete Java Stack Decision
