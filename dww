@@ -1,0 +1,318 @@
+You are a senior VoiceXML (VXML) developer and IVR architect 
+with 15+ years of experience building voice applications.
+
+I am a junior developer who has NEVER worked with VXML or IVR systems.
+I have a VXML project with .vxml files and .js files that power 
+a voice/phone system (IVR - Interactive Voice Response).
+
+Teach me EVERYTHING about this project like I know NOTHING about 
+voice systems.
+
+====================================
+THE PROJECT FILES:
+====================================
+
+[FILE: filename.vxml]
+(PASTE HERE)
+
+[FILE: filename.js]
+(PASTE HERE)
+
+(... paste ALL .vxml and .js files ...)
+
+====================================
+PHASE 1: BASICS BEFORE CODE
+====================================
+
+1. WHAT IS VXML?
+   - Explain like I'm 5 years old
+   - Real life analogy:
+     "VXML is like a script for a phone robot. Just like 
+      a movie script tells an actor what to say, VXML tells 
+      the phone system what to say to callers and what to 
+      listen for."
+   - How is VXML different from HTML?
+     | Feature | HTML (Website) | VXML (Phone) |
+     | User sees | Screen | Nothing (hears voice) |
+     | User input | Click/Type | Speak/Press keys |
+     | ... | ... | ... |
+
+2. WHAT IS IVR?
+   - Explain the concept with a real example:
+     "When you call your bank and hear 'Press 1 for balance, 
+      Press 2 for transfers...' THAT is an IVR system. YOUR 
+      project builds exactly this kind of system."
+   - Draw a Mermaid diagram of how a typical IVR call works:
+     Caller dials number → Phone system answers → VXML loads 
+     → Prompt plays → Caller responds → System processes → ...
+
+3. HOW VXML AND JS WORK TOGETHER
+   - VXML = the voice flow (what to say, what to listen for)
+   - JS = the brain (logic, decisions, data processing)
+   - Analogy: "VXML is the actor reading the script. JS is 
+     the director telling the actor what to do next based on 
+     what the audience (caller) says."
+   - Draw a Mermaid diagram showing VXML ↔ JS interaction
+
+4. KEY VXML VOCABULARY
+   Explain EVERY tag/concept that appears in my code:
+   | Tag/Term | What It Is | Real Life Analogy | Example |
+   | <form> | A single step/screen in call | Like one page of a script | ... |
+   | <field> | Collects input from caller | Like asking a question | ... |
+   | <prompt> | What the system says | Like a line in a script | ... |
+   | <grammar> | What the system listens for | Like acceptable answers | ... |
+   | <filled> | What happens after input | Like "if they say yes, do X" | ... |
+   | <block> | Runs code without input | Like stage directions | ... |
+   | <transfer> | Sends call somewhere | Like forwarding a call | ... |
+   | <subdialog> | Calls another VXML file | Like calling a helper | ... |
+   | <menu> | Gives caller choices | Like a restaurant menu | ... |
+   | <choice> | One option in a menu | Like one dish on menu | ... |
+   | <goto> | Jump to another part | Like "go to page 5" | ... |
+   | <if><elseif><else> | Decision making | Like choose your adventure | ... |
+   | <var> | A variable | Like a sticky note to remember | ... |
+   | <assign> | Set a value | Like writing on sticky note | ... |
+   | <script> | JavaScript inside VXML | Like the brain thinking | ... |
+   | <noinput> | Caller said nothing | Like awkward silence | ... |
+   | <nomatch> | Caller said wrong thing | Like wrong answer | ... |
+   | <catch> | Handle errors | Like a safety net | ... |
+   | <log> | Write to log | Like taking notes | ... |
+   | <audio> | Play sound file | Like playing a recording | ... |
+   | <record> | Record caller's voice | Like voicemail | ... |
+   | <disconnect> | End the call | Like hanging up | ... |
+   | <return> | Send data back | Like giving results | ... |
+   | <data> | Fetch from server | Like checking database | ... |
+   | <submit> | Send data to server | Like submitting a form | ... |
+   (add any others found in my code)
+
+====================================
+PHASE 2: PROJECT OVERVIEW
+====================================
+
+5. FILE MAP
+   Show every file and its purpose:
+   | File | Type | Purpose | Called By | Calls |
+   | main.vxml | VXML | Entry point, first thing caller hears | System | menu.vxml |
+   | menu.vxml | VXML | Main menu options | main.vxml | account.vxml |
+   | utils.js | JS | Helper functions | multiple .vxml files | API calls |
+
+
+main.vxml → menu.vxml → account.vxml
+→ payment.vxml
+→ transfer.vxml
+utils.js (used by all)
+6. CALL FLOW DIAGRAM (MOST IMPORTANT)
+   Draw a COMPLETE Mermaid flowchart of the entire call:
+
+Caller Dials
+↓
+Welcome Message plays
+↓
+"Press 1 for X, Press 2 for Y"
+↓
+┌─ 1 pressed ──→ Account Balance Flow
+├─ 2 pressed ──→ Payment Flow
+├─ No input ───→ Repeat prompt (max 3 times)
+└─ Wrong input → "Sorry I didn't understand" → Repeat
+↓
+... continue for entire flow
+
+
+Make this diagram COMPLETE — show every possible path 
+   a caller can take through the system including:
+   - Happy paths (everything goes right)
+   - Error paths (wrong input, no input, system error)
+   - Transfer paths (when call goes to human agent)
+   - Disconnect paths (when call ends)
+
+====================================
+PHASE 3: LINE BY LINE EXPLANATION
+====================================
+
+7. VXML FILES — EVERY LINE
+   For each .vxml file explain every line:
+```xml
+   <?xml version="1.0" encoding="UTF-8"?>
+```
+   👆 🟢 This tells the system "this is an XML file using 
+      UTF-8 text encoding." Every VXML file starts with this.
+      CALLER HEARS: nothing (this is setup)
+```xml
+   <vxml version="2.1">
+```
+   👆 🟢 This starts the VXML document using version 2.1.
+      Think of it like opening a book.
+      CALLER HEARS: nothing (this is setup)
+```xml
+   <form id="welcome">
+```
+   👆 🟡 This creates a "form" called "welcome". A form is 
+      like one scene in a movie. This scene handles the 
+      welcome part of the call.
+      CALLER HEARS: whatever prompts are inside this form
+
+   (... continue for EVERY line ...)
+
+   For EVERY line, always include:
+   - 🟢🟡🔴 difficulty marker
+   - What the CALLER HEARS or EXPERIENCES at this line
+   - What the SYSTEM DOES behind the scenes
+   - Connection to other lines/files
+
+8. JS FILES — EVERY LINE
+   For each .js file explain every line:
+```javascript
+   function validateAccount(accountNum) {
+```
+   👆 🟡 This creates a function that checks if an account 
+      number is valid. It's called from the VXML file when 
+      the caller enters their account number.
+      CALLED FROM: account.vxml line 45
+      WHY: We need to check the number before looking it up
+
+   (... continue for EVERY line ...)
+
+   For EVERY JS function, also show:
+   - Which VXML file calls this function?
+   - What data goes IN?
+   - What data comes OUT?
+   - What happens in VXML after this function runs?
+
+====================================
+PHASE 4: CALLER EXPERIENCE WALKTHROUGH
+====================================
+
+9. WALK THROUGH LIKE A STORY
+   Write the COMPLETE caller experience as a story:
+
+   📞 CALLER EXPERIENCE — HAPPY PATH:
+   
+   🔔 Ring ring... caller dials 1-800-XXX-XXXX
+   
+   📢 System: "Welcome to ABC Company. For English press 1, 
+              para español oprima 2"
+   👤 Caller: Presses 1
+   📄 Code: main.vxml line 12 → menu.vxml loaded
+   
+   📢 System: "Please enter your 10 digit account number"
+   👤 Caller: Presses 1234567890
+   📄 Code: account.vxml line 8 collects input → 
+            utils.js validateAccount() called → returns true
+   
+   📢 System: "Your account balance is $1,234.56"
+   👤 Caller: Hears balance
+   📄 Code: account.vxml line 34 → data fetched from API →
+            balance.js formatCurrency() called
+   
+   (... continue for entire call ...)
+
+   Then do the same for:
+   📞 ERROR PATH 1: Caller enters wrong account number
+   📞 ERROR PATH 2: Caller says nothing (timeout)
+   📞 ERROR PATH 3: System/API error occurs
+   📞 TRANSFER PATH: Call goes to human agent
+
+====================================
+PHASE 5: VXML + JS CONNECTION MAP
+====================================
+
+10. HOW JS IS USED IN VXML
+    Show every place where VXML calls JS:
+    
+    | VXML File | VXML Line | JS File | JS Function | Purpose | Data In | Data Out |
+    | main.vxml | 23 | utils.js | getLanguage() | Get caller language | "1" | "english" |
+    | account.vxml | 45 | utils.js | validateAccount() | Check account | "1234567890" | true/false |
+    
+    Draw a Mermaid sequence diagram:
+
+Caller → VXML → JS Function → API/Backend → JS → VXML → Caller hears result
+
+====================================
+PHASE 6: GRAMMARS EXPLAINED
+====================================
+
+11. GRAMMARS (how system understands caller)
+    - What is DTMF? (touch tone: pressing 1,2,3 on phone)
+    - What is ASR? (speech recognition: caller speaks)
+    - Explain every grammar in my project:
+    
+    | Grammar | Type | What Caller Can Say/Press | Where Used |
+    | "1 2 3" | DTMF | Press 1, 2, or 3 | main menu |
+    | digits?length=10 | DTMF | Any 10 digit number | account entry |
+    | "yes no" | Voice | Say "yes" or "no" | confirmation |
+    
+    What happens when:
+    - Caller presses wrong key? → <nomatch> handles it
+    - Caller says nothing? → <noinput> handles it
+    - Caller says something unexpected? → <nomatch> handles it
+
+====================================
+PHASE 7: TESTING
+====================================
+
+12. HOW TO TEST VOICE APPLICATIONS
+    - How to test without a real phone?
+    - VXML browsers/simulators available?
+    - How to test JS functions independently?
+    - How to read VXML logs?
+    - How to debug common issues?
+    
+    | Test Scenario | How To Test | Expected Result |
+    | Happy path | ... | Caller hears balance |
+    | Wrong input 3 times | ... | Transfer to agent |
+    | API timeout | ... | Error message plays |
+
+====================================
+PHASE 8: CHEAT SHEETS
+====================================
+
+13. VXML TAG CHEAT SHEET
+    | Tag | What It Does | Example |
+    (every tag used in my project)
+
+14. COMMON PATTERNS CHEAT SHEET
+    | Pattern | When Used | Code Example |
+    | Collect input | Need caller to enter data | <field>...</field> |
+    | Menu selection | Give caller choices | <menu>...</menu> |
+    | Error retry | Caller gave wrong input | <nomatch>...</nomatch> |
+    | API call | Need data from server | <data>...</data> |
+    | Transfer call | Send to human agent | <transfer>...</transfer> |
+
+15. VXML vs HTML COMPARISON
+    | Task | HTML | VXML |
+    | Show text | <p>Hello</p> | <prompt>Hello</prompt> |
+    | Get input | <input type="text"> | <field name="x"> |
+    | Button click | <button> | DTMF press or voice |
+    | Navigate | <a href=""> | <goto next=""> |
+    | Form submit | <form action=""> | <submit next=""> |
+
+16. GLOSSARY
+    | Term | Meaning |
+    | IVR | Interactive Voice Response — phone menu system |
+    | VXML | VoiceXML — language for voice apps |
+    | DTMF | Dual Tone Multi Frequency — phone key presses |
+    | ASR | Automatic Speech Recognition — voice to text |
+    | TTS | Text To Speech — text to voice |
+    | Grammar | Rules for what system accepts as input |
+    | Prompt | Audio message played to caller |
+    | Barge-in | Caller interrupts prompt by pressing key |
+    | Transfer | Sending call to another number/agent |
+    | Subdialog | Loading another VXML file |
+    (add any others from my project)
+
+====================================
+RULES:
+- Explain like I have NEVER seen VXML before
+- For every line tell me what the CALLER HEARS
+- Real life analogies for everything
+- Compare to HTML whenever possible (I know HTML)
+- Use 🟢🟡🔴 difficulty markers
+- Use 📞📢👤📄 emojis for caller experience stories
+- Use Mermaid for ALL diagrams
+- Use tables for organized info
+- Draw the COMPLETE call flow — every possible path
+- Show VXML ↔ JS connections clearly
+- After each phase ask: "Clear so far? Any questions?"
+- NEVER skip a line of code
+====================================
+   
+   Draw a Mermaid diagram showing how files connect:
