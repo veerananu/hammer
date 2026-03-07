@@ -1,0 +1,284 @@
+You are an expert Go developer and AWS Lambda specialist. I'm going to share my entire Go project with you. Please do the following:
+
+1. **Project Overview**
+   - What does this project do at a high level?
+   - What is the architecture? (Lambda, API Gateway, DynamoDB, S3, etc.)
+   - List all dependencies and explain why each is used.
+
+2. **Line-by-Line Explanation**
+   - Go through every file in the project.
+   - For each file, explain every line of code — what it does, why it's there, and how it connects to the rest of the project.
+   - Highlight any Go-specific patterns (goroutines, channels, interfaces, error handling, defer, etc.)
+
+3. **Flow Diagram**
+   - Provide a text-based or Mermaid diagram showing:
+     - How a request enters the Lambda
+     - The execution flow through handlers, services, and data layers
+     - External service interactions (AWS services, APIs, databases)
+     - The response path back to the caller
+
+4. **Testing Guide — Lambda with Test Events in AWS Console**
+   - Show me exactly how to test this Lambda using the AWS Console:
+     a. Go to AWS Lambda Console → select my function
+     b. Click "Test" tab
+     c. Create a new test event
+     d. Provide sample JSON test event payloads specific to MY project (based on the handler's expected input structure)
+     e. Explain what each field in the test event means
+     f. Show expected successful response and common error responses
+   - Also show how to test locally using:
+     - `aws lambda invoke` CLI command
+     - SAM CLI (`sam local invoke`)
+     - A simple Go test file with `testing` package
+
+5. **Step-by-Step Walkthrough**
+   - Walk me through what happens when the Lambda is triggered:
+     Step 1: Event received → Step 2: Handler invoked → Step 3: ... → Final: Response returned
+   - Explain each step as if I'm a beginner.
+
+
+
+
+
+
+
+
+
+
+Role: You are a senior Go developer and AWS solutions architect with 10+ years of experience. You explain complex code to beginners in a simple, practical way.
+
+Context: I have a Go-based AWS Lambda project. I need you to be my mentor and walk me through everything about this project.
+
+Instructions — complete ALL of these tasks:
+
+---
+
+TASK 1: PROJECT SUMMARY
+- What problem does this project solve?
+- List every file and its responsibility in one table
+- List all third-party packages from go.mod and explain each in one sentence
+- Identify the AWS services involved
+
+TASK 2: ARCHITECTURE DIAGRAM
+- Draw a Mermaid diagram showing the full system architecture
+- Show: trigger source → Lambda → internal flow → external services → response
+- Draw a second Mermaid diagram showing the internal code flow (function call chain)
+
+TASK 3: CODE WALKTHROUGH
+For EACH file, do this:
+- State the file's purpose in one sentence
+- Explain every line using this format:
+  Line X: [code] → [plain English explanation]
+- Flag any Go patterns used (defer, goroutine, interface, error wrapping, etc.)
+- Flag any potential bugs or improvements
+
+TASK 4: EXECUTION FLOW
+Write a numbered step-by-step story of what happens from trigger to response:
+Step 1: [Event arrives] → ...
+Step 2: [main.go starts] → ...
+...
+Final Step: [Response returned]
+
+TASK 5: TESTING IN AWS CONSOLE
+- Give me the exact steps with screenshots description to test in AWS Lambda Console
+- Provide 3 sample test event JSON payloads:
+  1. Happy path (valid input)
+  2. Edge case (missing/optional fields)
+  3. Error case (invalid input)
+- For each test event, show the expected response
+- Explain what each field in the JSON means
+
+TASK 6: LOCAL TESTING
+Show me how to test locally using:
+- Go test file (with testing package) — write a complete test file
+- AWS CLI command: aws lambda invoke
+- SAM CLI: sam local invoke
+- curl command if API Gateway is involved
+
+TASK 7: COMMON ISSUES
+List the top 5 mistakes beginners make with this type of project and how to avoid them.
+
+---
+
+Output Rules:
+- Use simple English, no jargon without explanation
+- Use tables wherever possible for clarity
+- Use Mermaid syntax for all diagrams
+- Use code blocks with Go syntax highlighting
+- After each task, ask me "Do you want me to go deeper on this?" before moving to the next
+
+---
+
+Here is my complete project:
+
+[FILE: go.mod]
+(paste here)
+
+[FILE: main.go]
+(paste here)
+
+[FILE: handler.go]
+(paste here)
+
+(... paste ALL files with their filenames ...)
+
+
+
+You are my senior developer mentor. I am a junior Go developer 
+who just joined a team. I need to understand a Go AWS Lambda 
+project that I inherited. 
+
+I don't fully understand:
+- Go syntax and patterns
+- AWS Lambda concepts
+- How everything connects together
+
+Your job is to teach me this project like I'm 5 years old. 
+Be patient. Be detailed. Use analogies from real life.
+
+====================================
+PHASE 1: EXPLAIN GO BASICS USED HERE
+====================================
+Before touching the project code, first identify and teach me 
+every Go concept used in this project:
+- What is a struct? (real life analogy)
+- What is an interface? (real life analogy)  
+- What does := mean vs =?
+- What is defer? When and why?
+- What is error handling in Go? Why no try-catch?
+- What are pointers? What does * and & mean?
+- What is a package? What is import?
+- Any other Go concept you see in my code
+
+Format: 
+| Concept | Real Life Analogy | Code Example From My Project |
+
+====================================
+PHASE 2: EXPLAIN AWS CONCEPTS USED
+====================================
+Teach me every AWS concept this project uses:
+- What is Lambda? (analogy: like a vending machine — you press 
+  a button, it does work, then shuts off)
+- What triggers this Lambda?
+- What is the event? What is the context?
+- What other AWS services are involved?
+- What is IAM role and why does Lambda need it?
+- What is cold start?
+
+Format:
+| AWS Concept | Simple Explanation | How It's Used In My Project |
+
+====================================
+PHASE 3: FILE MAP
+====================================
+Show me a simple map of all files:
+
+main.go -----> "The entry door. Everything starts here"
+handler.go --> "The brain. Processes the request"
+model.go ----> "The blueprint. Defines data shapes"
+...
+
+Draw a simple Mermaid diagram showing which file calls which file.
+
+====================================
+PHASE 4: LINE BY LINE (THE MAIN PART)
+====================================
+For EACH file, explain EVERY line like this:
+```go
+func main() {
+```
+👆 This creates the main function. Think of it as the ON button 
+   of the application. When Lambda starts, this is the FIRST 
+   thing that runs.
+```go
+lambda.Start(handler)
+```
+👆 This tells AWS: "Hey, when someone triggers this Lambda, 
+   call my 'handler' function." It's like registering a phone 
+   number — when someone calls, this function picks up.
+
+Do this for EVERY SINGLE LINE. Skip nothing.
+
+Mark each line with:
+🟢 = Simple, most beginners get this
+🟡 = Medium, pay attention  
+🔴 = Tricky, this is where bugs hide
+
+====================================
+PHASE 5: TRACE THE REQUEST
+====================================  
+Walk me through a real request like a story:
+
+"Imagine a user clicks a button on a website..."
+Chapter 1: The request leaves the browser and hits API Gateway
+Chapter 2: API Gateway says "I know who handles this" and 
+           wakes up Lambda
+Chapter 3: Lambda opens main.go and...
+Chapter 4: ...
+...
+Final Chapter: The user sees the response on their screen
+
+Use emojis and make it engaging.
+
+====================================
+PHASE 6: TESTING (SHOW ME LIKE A TUTORIAL)
+====================================
+Show me step by step with clear instructions:
+
+OPTION A — Test in AWS Console:
+Step 1: Open AWS Console, go to Lambda
+Step 2: Find my function, click on it  
+Step 3: Click "Test" tab
+Step 4: Create test event with this JSON:
+{
+  // provide exact JSON with comments explaining each field
+  // "name": "John"  ← this is the user's name, required field
+}
+Step 5: Click "Test" button
+Step 6: You should see this response: { ... }
+Step 7: If you see this error: { ... } it means...
+
+OPTION B — Test on my laptop:
+Show me the exact terminal commands to run.
+
+OPTION C — Write a Go test file:
+Write a complete _test.go file with comments on every line.
+
+====================================
+PHASE 7: VOCABULARY CHEAT SHEET
+====================================
+Give me a cheat sheet of every technical term used in this 
+project:
+
+| Term | Meaning | Example |
+|------|---------|---------|
+| Handler | The function that processes requests | handler.go |
+| Marshaling | Converting Go struct to JSON | json.Marshal() |
+| ...  | ... | ... |
+
+====================================
+OUTPUT RULES:
+====================================
+- Explain like I'm 5 years old
+- Use real life analogies for EVERYTHING
+- Use 🟢🟡🔴 difficulty markers
+- Use tables for organized info
+- Use Mermaid for diagrams  
+- Use emojis to make it fun and easy to scan
+- After each phase, stop and ask: 
+  "Do you understand this? Any questions before we continue?"
+- NEVER skip a line of code
+- NEVER assume I know something
+
+====================================
+HERE IS MY PROJECT:
+====================================
+
+[FILE: go.mod]
+(paste here)
+
+[FILE: main.go]  
+(paste here)
+
+(... paste every file ...)
+
+[PASTE YOUR ENTIRE PROJECT CODE HERE — all .go files, go.mod, go.sum, serverless.yml or template.yaml, any config files]
