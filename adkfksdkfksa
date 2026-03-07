@@ -1,0 +1,186 @@
+====================================
+YOUR EXACT PLAN — FOLLOW THIS ORDER
+====================================
+
+MESSAGE 1 (send this first):
+====================================
+
+You are a senior VXML developer. I am a junior developer 
+who has NEVER seen VXML before. I have a large IVR project 
+with .vxml files, .js files, grammar files.
+
+Before I show you any code, teach me:
+
+1. What is VXML? Explain like I'm 5 with real life analogy
+2. What is IVR? Give a real example (like calling a bank)
+3. How do VXML and JS work together? Use analogy
+4. What is a grammar file? Use analogy
+5. Explain these VXML tags with analogies:
+   <form> <field> <prompt> <grammar> <filled> <block>
+   <menu> <choice> <goto> <if> <var> <assign> <script>
+   <noinput> <nomatch> <catch> <transfer> <subdialog>
+   <audio> <record> <disconnect> <data> <submit> <return>
+
+   Format:
+   | Tag | What It Does | Real Life Analogy |
+
+6. Explain these JS concepts used in VXML:
+   - How JS is embedded in VXML
+   - How VXML calls JS functions
+   - How JS returns data to VXML
+
+Give me a solid foundation before I show you my code.
+
+====================================
+
+
+MESSAGE 2 (after you understand basics):
+====================================
+
+Good. Now here is my project folder structure:
+
+project/
+├── vxml/
+│   ├── main.vxml
+│   ├── menu.vxml
+│   ├── ... (list all files)
+├── scripts/
+│   ├── utils.js
+│   ├── ... (list all files)
+├── grammars/
+│   ├── ... (list all files)
+└── config/
+    └── ... (list all files)
+
+Total files: ___
+
+DON'T explain code yet. Just tell me:
+1. What does each file probably do based on its name?
+   | File | Likely Purpose |
+2. What is probably the entry point file?
+3. What is the likely call flow order?
+   File 1 → File 2 → File 3 → ...
+4. Group files by category:
+   | Category | Files |
+   | Entry point | main.vxml |
+   | Menu/navigation | menu.vxml |
+   | Feature files | account.vxml, payment.vxml |
+   | JS logic | utils.js, api.js |
+   | Grammars | menu.grxml |
+   | Audio | welcome.wav |
+   | Config | app.properties |
+
+====================================
+
+
+MESSAGE 3 (entry point file):
+====================================
+
+Now let's go file by file. Starting with the ENTRY POINT.
+
+[FILE: main.vxml]
+(paste the entry point file code here)
+
+Explain every line:
+```xml
+<the line>
+```
+🟢/🟡/🔴 difficulty
+WHAT IT DOES: simple English
+CALLER HEARS: what caller experiences
+WHY NEEDED: what breaks if removed
+CONNECTS TO: which other file/line
+
+After explaining all lines, draw a Mermaid flowchart 
+of just THIS file's flow.
+
+====================================
+
+
+MESSAGE 4, 5, 6... (one file at a time):
+====================================
+
+Next file.
+
+[FILE: menu.vxml]
+(paste code)
+
+Same format as before. Plus:
+- How does this file connect to the previous file?
+- Draw updated Mermaid diagram adding this file
+
+(repeat for each file — go in call flow order, 
+not alphabetical order)
+
+====================================
+
+
+AFTER ALL VXML FILES — send this:
+====================================
+
+Now the JS files.
+
+[FILE: utils.js]
+(paste code)
+
+For every function explain:
+- What does it do?
+- Which VXML file calls it? At which line?
+- What data goes in?
+- What data comes out?
+- What does the caller hear after this runs?
+
+(repeat for each JS file)
+
+====================================
+
+
+AFTER ALL JS FILES — send this:
+====================================
+
+Now the grammar files.
+
+[FILE: menu.grxml]
+(paste code)
+
+For each grammar explain:
+| Input | What Caller Does | System Understands |
+| "1" | Presses 1 | option_balance |
+
+(repeat for each grammar file)
+
+====================================
+
+
+FINAL MESSAGE — THE BIG PICTURE:
+====================================
+
+You have now seen my entire project. Now give me:
+
+1. COMPLETE CALL FLOW DIAGRAM
+   Draw one Mermaid flowchart showing the ENTIRE call:
+   - Every path: happy, error, timeout, transfer, hangup
+   - Label with: file name, what caller hears, what they press
+   - Show where JS is called
+   - Show where grammars are used
+
+2. VXML ↔ JS MASTER MAP
+   | # | VXML File | Line | JS File | Function | Purpose | Data In → Out |
+
+3. ERROR HANDLING SUMMARY
+   | Error | When | Caller Hears | File | Max Retries | After Max |
+
+4. DATA FLOW
+   | Variable | Born In | Example | Travels To | Final Use |
+
+5. FULL VOCABULARY
+   | Term | Meaning | Where In My Project |
+
+6. ONE PARAGRAPH SUMMARY
+   Write a simple paragraph I can use to explain this 
+   entire project to another junior developer.
+
+7. THINGS TO WATCH OUT FOR
+   | ⚠️ Issue | File | Why It Matters |
+
+====================================
