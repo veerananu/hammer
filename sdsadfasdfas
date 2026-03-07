@@ -1,0 +1,160 @@
+You are a senior developer and code reviewer. I just joined a new team.
+I have NO idea about their coding standards, patterns, or conventions.
+
+Analyze their existing project and extract EVERY coding standard they follow
+so I can write code that looks like THEIRS, not like an outsider.
+
+====================================
+THE PROJECT:
+====================================
+
+====================================
+EXTRACT ALL OF THESE:
+====================================
+
+1. PROJECT STRUCTURE
+   - How are folders organized? Draw a tree diagram
+   - What is the naming convention for folders?
+   - Where do they put handlers, models, services, utils, configs?
+   - Is there a pattern? (MVC, Clean Architecture, Hexagonal, etc.)
+   - Show: folder → purpose → example file
+
+2. FILE NAMING
+   | Pattern | Example | Rule |
+   - snake_case or camelCase or kebab-case?
+   - Do they suffix files? (e.g., _handler.go, _service.go, _test.go)
+   - How do they name test files?
+   - How do they name config files?
+
+3. VARIABLE NAMING
+   | Type | Convention | Example From Their Code |
+   - Local variables: short or descriptive?
+   - Global variables: how named?
+   - Constants: UPPER_CASE or CamelCase?
+   - Function parameters: abbreviated or full words?
+   - Loop variables: i,j,k or descriptive?
+   - Boolean variables: isActive, hasPermission pattern?
+   - Error variables: err or specific names?
+
+4. FUNCTION / METHOD NAMING
+   | Pattern | Example | Rule |
+   - Public vs private naming?
+   - Verb-first? (GetUser, CreateOrder, HandleRequest)
+   - How long are function names?
+   - Do they use receivers? (methods on structs)
+   - How do they name constructors? (New..., Create...)
+
+5. STRUCT / TYPE NAMING
+   | Pattern | Example | Rule |
+   - Singular or plural?
+   - How do they name interfaces?
+   - How do they name custom types?
+   - JSON tags: snake_case or camelCase?
+   - Do they use pointer receivers or value receivers?
+
+6. ERROR HANDLING PATTERN
+   - How do they handle errors? (return, wrap, log, panic?)
+   - Do they use custom error types?
+   - Do they use fmt.Errorf or errors.New or custom?
+   - Do they wrap errors? (fmt.Errorf("...: %w", err))
+   - Show their exact error handling pattern with example
+
+7. LOGGING PATTERN
+   - What logger do they use? (log, logrus, zap, zerolog?)
+   - Log format: JSON or text?
+   - What log levels do they use?
+   - What info do they include in logs?
+   - Show their exact logging pattern with example
+
+8. IMPORT ORGANIZATION
+   - How do they order imports?
+   - Do they group: stdlib / external / internal?
+   - Do they use aliases?
+   - Show their exact import pattern
+
+9. CODE ORGANIZATION INSIDE FILES
+   - What comes first? (constants, types, functions?)
+   - Do they group related functions together?
+   - How do they order methods on a struct?
+   - Where do they put init() function?
+   - Show their standard file layout template
+
+10. COMMENTS & DOCUMENTATION
+    - Do they comment every function?
+    - What style? // or /* */
+    - Do they use godoc format?
+    - Do they write TODO/FIXME comments?
+    - Do they document packages?
+    - Show their commenting pattern
+
+11. TESTING PATTERNS
+    - How do they name tests? Test_FunctionName or TestFunctionName?
+    - Do they use table-driven tests?
+    - Do they use testify or standard testing?
+    - Do they use mocks? What library?
+    - How do they organize test helpers?
+    - Do they have integration tests vs unit tests separated?
+    - Show their exact test pattern with example
+
+12. CONFIGURATION PATTERN
+    - How do they manage config? (env vars, config files, flags?)
+    - Do they use viper, envconfig, or custom?
+    - How do they handle secrets?
+    - How do they handle different environments? (dev, staging, prod)
+
+13. DEPENDENCY INJECTION
+    - Do they pass dependencies through constructors?
+    - Do they use interfaces for dependencies?
+    - Do they use a DI framework?
+    - Show their pattern
+
+14. API / REQUEST-RESPONSE PATTERN
+    - How do they structure request/response models?
+    - How do they validate input?
+    - How do they format API responses? (envelope pattern?)
+    - Standard HTTP status codes they use?
+    - Show their pattern
+
+15. DATABASE PATTERN
+    - How do they connect to DB?
+    - Do they use ORM or raw SQL?
+    - How do they name tables, columns?
+    - How do they handle transactions?
+    - How do they handle migrations?
+
+16. HIDDEN RULES (things nobody tells new developers)
+    - Any unwritten conventions you can detect?
+    - Any anti-patterns they avoid?
+    - Any team-specific shortcuts or helpers?
+    - Things that would make my code look "different" from theirs?
+
+====================================
+FINAL OUTPUT:
+====================================
+
+CHEAT SHEET: Give me a one-page quick reference card with ALL their 
+conventions I can keep open while coding:
+
+| Category | Their Convention | Example | Do This | Don't Do This |
+
+STARTER TEMPLATE: Give me a blank Go file template that follows ALL 
+their conventions, ready to use when I create new files.
+
+CODE REVIEW CHECKLIST: Give me a checklist I can run through before 
+submitting my code to make sure it matches their standards:
+☐ File named correctly?
+☐ Variables follow convention?
+☐ Errors handled their way?
+☐ Imports organized?
+☐ Tests written their way?
+☐ ...
+
+====================================
+RULES:
+- Be extremely detailed, miss nothing
+- Use tables for organized info
+- Show REAL examples from their code, not generic ones
+- If you see inconsistencies in their code, flag them
+- Compare with Go community standards where relevant
+- Ask "Want me to analyze more files?" at the end
+====================================
