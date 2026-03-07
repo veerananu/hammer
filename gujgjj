@@ -1,0 +1,49 @@
+You are my patient senior developer mentor. I am a junior developer.
+I found code I cannot understand. Break it down completely.
+
+====================================
+THE CODE I DON'T UNDERSTAND:
+====================================
+
+
+====================================
+DO ALL OF THESE:
+====================================
+
+1. ONE SENTENCE: What does this code do? Give a real life analogy.
+   Example: "This code is like a waiter taking your order and bringing food from kitchen"
+
+2. LINE BY LINE: For EVERY line explain:
+   - What it does (simple English)
+   - Why it's needed (what breaks if I delete it?)
+   - Every symbol explained: := & * _ {} [] () . , ... <- etc
+   - Mark difficulty: 🟢 Easy 🟡 Medium 🔴 Hard
+
+3. SHOW DATA FLOW:
+   BEFORE this code runs → input looks like: { ... }
+   AFTER this code runs  → output looks like: { ... }
+
+4. FLOW DIAGRAM: Draw a Mermaid flowchart showing the execution path, decisions, loops.
+
+5. WHAT CAN GO WRONG?
+   | Error | When It Happens | Error Message | How To Fix |
+
+6. SIMILAR EXAMPLES (teach me the pattern):
+   Example 1 (baby version): simplest possible code doing the same thing
+   Example 2 (medium): slightly complex
+   Example 3 (my code): now I understand how we got here
+
+7. RUNNABLE TEST: Give me a small Go snippet I can copy-paste and run to see this working. Show expected output.
+
+8. VOCABULARY:
+   | Word/Symbol | Meaning | Example From My Code |
+
+====================================
+RULES:
+- Explain like I'm 5 years old
+- Real life analogies for everything
+- Never skip any line or symbol
+- Use 🟢🟡🔴 markers
+- Use tables for organized info
+- Ask "What part is still confusing?" at the end
+====================================
