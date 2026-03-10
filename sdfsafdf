@@ -1,0 +1,303 @@
+# VXML / IVR Project Analysis Prompt
+
+> **How to use:** Copy everything below the line into your LLM (ChatGPT, Claude, Gemini, etc.), then paste ALL your project files where indicated. The LLM will generate a single HTML file you can open in any browser — all Mermaid diagrams will render automatically.
+
+---
+
+## COPY FROM HERE ↓
+
+```
+You are a senior VoiceXML (VXML) developer and IVR architect with 15+ years of experience.
+
+Your task: Analyze the VXML/IVR project files I provide below. Give me a COMPLETE explanation of every file, every line, every flow. I am a beginner who has NEVER worked with VXML or IVR.
+
+═══════════════════════════════════════
+OUTPUT FORMAT — MANDATORY
+═══════════════════════════════════════
+
+Generate your ENTIRE response as a SINGLE self-contained HTML file that I can save as "analysis.html" and open in any browser.
+
+The HTML file MUST:
+1. Include Mermaid.js via CDN so all diagrams render automatically:
+   <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+   <script>mermaid.initialize({startOnLoad:true, theme:'default', securityLevel:'loose', flowchart:{useMaxWidth:true, htmlLabels:true}});</script>
+
+2. Use this structure for EVERY diagram:
+   <div class="mermaid">
+   graph TD
+     A[Start] --> B[Next Step]
+   </div>
+
+3. Include built-in CSS styling for:
+   - Clean readable typography (font-family: system-ui, sans-serif)
+   - Styled tables with borders, alternating row colors, sticky headers
+   - Color-coded difficulty markers: 🟢 green, 🟡 yellow, 🔴 red
+   - Code blocks with syntax highlighting background
+   - Collapsible sections using <details><summary> for each file's line-by-line analysis
+   - A sticky sidebar or top navigation with anchor links to every section
+   - Responsive design that works on mobile
+   - Print-friendly styles
+
+4. Use <details><summary> tags for long sections so the page is navigable:
+   <details>
+   <summary>📄 main.vxml — Line by Line (click to expand)</summary>
+   ... content ...
+   </details>
+
+5. Include a "Table of Contents" at the top with clickable links to every section.
+
+6. Be completely self-contained — no external files needed except the Mermaid CDN.
+
+Do NOT output markdown. Do NOT output plain text. Output ONLY the HTML file content starting with <!DOCTYPE html> and ending with </html>.
+
+═══════════════════════════════════════
+CRITICAL RULES
+═══════════════════════════════════════
+
+- Do NOT ask me any questions. Assume nothing and explain everything.
+- Do NOT skip any line of code. Explain every single line.
+- Do NOT summarize or abbreviate. Be thorough.
+- Cover ALL files: .vxml, .js, .grxml, .gram, .xml, and any others.
+- If the output is too long for one response, end the HTML cleanly with a closing note "<!-- CONTINUED IN NEXT RESPONSE -->" and a visible message. I will reply "continue" — then output the REMAINING sections as a NEW complete HTML file (analysis-part2.html, etc.)
+
+═══════════════════════════════════════
+MY PROJECT FILES
+═══════════════════════════════════════
+
+[FILE: filename1.vxml]
+<paste file contents here>
+
+[FILE: filename2.vxml]
+<paste file contents here>
+
+[FILE: filename1.js]
+<paste file contents here>
+
+[FILE: filename1.grxml]
+<paste file contents here>
+
+(paste ALL project files — every .vxml, .js, .grxml, .gram, .xml, .cfg, etc.)
+
+═══════════════════════════════════════
+ANALYSIS REQUIRED — COMPLETE ALL SECTIONS
+═══════════════════════════════════════
+
+## SECTION 1: BASICS (explain before touching code)
+
+1A. WHAT IS VXML?
+- Explain like I'm a complete beginner.
+- Analogy: VXML is to phone calls what HTML is to websites.
+- HTML table comparing: HTML vs VXML (what user sees, how input works, navigation, forms, etc.)
+
+1B. WHAT IS IVR?
+- Real example: "When you call a bank and hear Press 1 for balance — that is IVR."
+- Mermaid diagram: how a basic IVR call works end-to-end.
+
+1C. HOW VXML AND JS WORK TOGETHER
+- VXML = the script (what to say, what to listen for)
+- JS = the logic (decisions, calculations, data processing)
+- Mermaid diagram showing how VXML calls JS and JS returns results to VXML.
+
+1D. KEY VOCABULARY TABLE
+For every VXML tag and concept that appears anywhere in my files, provide an HTML table:
+| Tag/Term | What It Does | Beginner Analogy | Example From My Code |
+
+Include at minimum: <vxml>, <form>, <field>, <prompt>, <grammar>, <filled>, <block>,
+<transfer>, <subdialog>, <menu>, <choice>, <goto>, <if>/<elseif>/<else>, <var>,
+<assign>, <script>, <noinput>, <nomatch>, <catch>, <log>, <audio>, <record>,
+<disconnect>, <return>, <data>, <submit>, <property>, <link>, <throw>, <exit>,
+plus any others found in my files.
+
+## SECTION 2: PROJECT MAP
+
+2A. FILE TABLE
+| File Name | Type (.vxml/.js/.grxml) | Purpose (one sentence) | Called By | Calls To |
+
+2B. FILE DEPENDENCY DIAGRAM (Mermaid)
+Show how every file connects to every other file. Include subdialog calls, goto references, script src imports, grammar references — every cross-file link.
+
+2C. COMPLETE CALL FLOW DIAGRAM (Mermaid flowchart)
+Map the ENTIRE call from start to finish. Show:
+- Every possible path a caller can take
+- Happy paths (everything works)
+- Error paths (wrong input, no input — show retry logic with max attempts)
+- Transfer-to-agent paths
+- Disconnect/hangup paths
+- Subdialog calls and returns
+- Where JS functions are invoked
+This must be the COMPLETE flow — do not simplify or omit any branch.
+
+## SECTION 3: LINE-BY-LINE EXPLANATION
+
+3A. EVERY VXML FILE — EVERY LINE
+Wrap each file in a <details> collapsible block.
+For each .vxml file, go line by line. Display the code in a styled <pre><code> block, then below it:
+- [🟢 Easy / 🟡 Medium / 🔴 Advanced] difficulty marker
+- WHAT IT DOES: technical explanation
+- CALLER EXPERIENCE: what the caller hears or what happens on the phone at this point
+- SYSTEM ACTION: what the platform does behind the scenes
+- CONNECTIONS: links to other lines, files, or JS functions
+
+3B. EVERY JS FILE — EVERY LINE
+Wrap each file in a <details> collapsible block.
+For each .js file, go line by line:
+- What it does
+- CALLED FROM: which VXML file and line number uses this
+- INPUT: what data comes in
+- OUTPUT: what data goes back to VXML
+- WHAT HAPPENS NEXT: what the VXML does with the result
+
+3C. EVERY GRAMMAR FILE — EVERY LINE
+For each .grxml / .gram file:
+- What inputs it accepts (DTMF keypresses and/or spoken words)
+- Where it is referenced in the VXML files
+- Table: | Input (what caller says/presses) | What it maps to | Used in which file |
+
+## SECTION 4: CALLER EXPERIENCE STORIES
+
+Write the complete call experience as a narrative, styled like a screenplay.
+Use these markers with colored badges in the HTML:
+- 📞 = call event (blue badge)
+- 📢 = system speaks to caller (green badge)
+- 👤 = caller action (orange badge)
+- 📄 = code reference file + line (gray badge)
+- ⚠️ = error/edge case (red badge)
+
+4A. HAPPY PATH (everything goes right)
+Walk through from dialing the number to hanging up, with every prompt heard, every input given, and the exact code lines executing.
+
+4B. ERROR PATH: Wrong input
+Caller presses wrong keys or says wrong things. Show retry logic, max attempts, what happens when max is exceeded.
+
+4C. ERROR PATH: No input / silence
+Caller says nothing. Show timeout behavior, reprompts, and eventual transfer or disconnect.
+
+4D. ERROR PATH: System/API failure
+Backend returns error. Show how the code handles it and what the caller hears.
+
+4E. TRANSFER PATH
+Show any path where the call gets transferred to a human agent — what triggers it, what the caller hears, what data is passed.
+
+## SECTION 5: VXML ↔ JS CONNECTION MAP
+
+5A. Complete HTML table:
+| VXML File | Line # | JS File | Function Name | Purpose | Data In | Data Out |
+
+5B. Mermaid sequence diagram showing data flow:
+Caller → VXML prompt → Caller input → VXML collects → JS processes → Result → VXML plays response → Caller hears
+
+## SECTION 6: GRAMMARS & INPUT HANDLING
+
+6A. Grammar inventory table:
+| Grammar File/Definition | Type (DTMF/Voice/Both) | Accepted Inputs | Used In File | Used In Form/Field |
+
+6B. Error handling table:
+| Scenario | Tag That Handles It | What Caller Hears | Max Retries | After Max Retries |
+
+## SECTION 7: SUBDIALOG MAP
+
+For every <subdialog> in the project, HTML table:
+| Parent File | Subdialog Target | Data Sent (namelist) | Data Returned (<return>) | What Happens After Return |
+
+Mermaid diagram showing all subdialog call/return flows with data passed each way.
+
+## SECTION 8: PROPERTIES & CONFIGURATION
+
+List every <property> tag in the project:
+| Property Name | Value | What It Controls | Where Set | Beginner Explanation |
+(e.g., timeout, inputmodes, bargein, maxnoinputs, etc.)
+
+## SECTION 9: QUICK REFERENCE CHEAT SHEETS
+
+9A. VXML TAG CHEAT SHEET (only tags used in my project)
+| Tag | Purpose | Example from my code |
+
+9B. COMMON PATTERNS in my project
+| Pattern | Purpose | Where in code |
+(e.g., collect-and-validate, menu-selection, error-retry, API-call, transfer)
+
+9C. VXML ↔ HTML COMPARISON
+| Task | HTML | VXML |
+(display text, get input, navigate, submit data, handle errors, etc.)
+
+9D. GLOSSARY
+| Term | Definition |
+(IVR, VXML, DTMF, ASR, TTS, Grammar, Prompt, Barge-in, Transfer, Subdialog, plus anything else from my project)
+
+## SECTION 10: TESTING GUIDE
+
+- How to test this project without a real phone
+- Available VXML browsers/simulators
+- How to unit test the JS functions
+- How to read VXML platform logs
+- Common bugs and how to debug them
+| Test Scenario | How to Test | Expected Result |
+
+═══════════════════════════════════════
+HTML TEMPLATE REFERENCE
+═══════════════════════════════════════
+
+Use this as the starting skeleton for the HTML output:
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VXML/IVR Project Analysis</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+  <script>mermaid.initialize({startOnLoad:true, theme:'default', securityLevel:'loose', flowchart:{useMaxWidth:true, htmlLabels:true}});</script>
+  <style>
+    /* Include all styles inline: typography, tables, code blocks, 
+       badges, collapsible sections, sidebar nav, print styles, etc. */
+  </style>
+</head>
+<body>
+  <nav id="sidebar"><!-- TOC with anchor links --></nav>
+  <main>
+    <h1>VXML/IVR Project Analysis</h1>
+    <!-- All sections here -->
+    <!-- Mermaid diagrams as: <div class="mermaid">graph TD ...</div> -->
+    <!-- Collapsible file analysis as: <details><summary>...</summary>...</details> -->
+  </main>
+</body>
+</html>
+
+═══════════════════════════════════════
+REMEMBER:
+- Output ONLY HTML. No markdown. No plain text.
+- Start with <!DOCTYPE html>, end with </html>
+- All Mermaid diagrams must be inside <div class="mermaid"> tags
+- All tables must be proper HTML <table> elements with styling
+- Use <details><summary> for each file's line-by-line analysis
+- Include sidebar/top navigation
+- Never ask me questions — just analyze what I gave you
+- Never skip a line of code
+═══════════════════════════════════════
+```
+
+## COPY UP TO HERE ↑
+
+---
+
+## Tips for Best Results
+
+1. **Paste ALL files** — don't leave any out. The more files you include, the more accurate the flow diagrams will be.
+
+2. **Save the output** — Copy the LLM's response, paste into a text editor, save as `analysis.html`, and open in your browser. All Mermaid diagrams will render automatically.
+
+3. **If the response gets cut off** — type `continue`. Save each part as `analysis-part1.html`, `analysis-part2.html`, etc.
+
+4. **For very large projects (10+ files)** — split into batches:
+   - Batch 1: All .vxml files → ask for Sections 1-4
+   - Batch 2: All .js files → ask for Sections 3B and 5
+   - Batch 3: All .grxml files → ask for Sections 3C and 6
+   - Final: Ask for Sections 7-10 with all files
+   Then manually combine the HTML files.
+
+5. **If Mermaid diagrams don't render** — open browser console (F12) and check for syntax errors. Common fix: replace special characters in node labels with text only.
+
+6. **Model recommendations:**
+   - Best: Claude Opus, GPT-4o, Gemini 1.5 Pro (large context, thorough)
+   - Good: Claude Sonnet, GPT-4o-mini (may need "continue" more often)
+   - Avoid: Smaller/older models that can't handle long HTML output
