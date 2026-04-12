@@ -1,0 +1,330 @@
+•	Config-driven: Entity definitions live in DynamoDB, not code. Add a new intent by inserting a row.
+•	Anti-hallucination: Seven-layer validation ensures no fabricated values reach the caller. Values the caller did not literally say are rejected (wasExplicit check). Confidence threshold set to 0.95.
+•	Flat response: Every value returned is a string. Connect only accepts flat key-value maps. No stringified JSON arrays.
+
+•	Minimal response: Only entity values and control fields (status, count, missing_count, extraction_complete, intent) are returned.
+
+
+{
+  "{entity_name}": "{value}" or "NOT_FOUND",  // one per entity
+  "count": "{found_count}",
+  "missing_count": "{missing_count}",
+  "extraction_complete": "true" or "false",
+  "status": "COMPLETE" or "PARTIAL" or "EMPTY",
+  "intent": "{enterpriseIntent}"
+}
+
+
+
+.1 End-to-End Flow
+[Caller speaks]
+      ↓
+[Lambda 1: Intent Detection] → $.External.enterpriseIntent
+      ↓
+[Check: Does intent need entities?]
+  ├─ No  → Handle directly (balance inquiry, transfer to agent)
+  └─ Yes → [Lambda 2: Entity Extraction]
+              ↓
+          $.External.from_account = "savings"
+          $.External.amount = "100"
+          $.External.status = "COMPLETE"
+              ↓
+          [Check $.External.status]
+            ├─ COMPLETE → Confirm → [Lambda 3: Fulfillment]
+            ├─ PARTIAL  → Ask for missing → Loop back
+            └─ EMPTY    → Ask caller to repeat → Loop back
+2.2 Lambda 2 Internal Steps
+Step 1.	Receive enterpriseIntent from Connect parameters (passed by Lambda 1 via Set contact attributes). Read CollectionConfig (DynamoDB) using ContactId to extract the last conversation segment’s transcript from UserInput fields.
+Step 2.	Fetch entity definitions from IntentEntityDefinitions (DynamoDB) using enterpriseIntent as the partition key.
+Step 3.	Build extraction prompt dynamically by looping through each entity definition. CONSTRAINED entities get allowedValues injected. OPEN entities get type rules.
+Step 4.	Call Claude Opus 4.6 via Bedrock with temperature=0. Receive structured JSON with value, confidence, and wasExplicit per entity.
+Step 5.	Validate every extraction: CONSTRAINED values checked against allowedValues list, OPEN values checked with type-specific rules, confidence below 0.85 rejected.
+Step 6.	Flatten results into a flat string key-value map and return to Connect.
+2.3 DynamoDB Tables
+Table	Partition Key	Access Pattern	Purpose
+IntentEntityDefinitions	enterpriseIntent (String)	GetItem by intent	What entities to extract per intent
+CollectionConfig	ContactId (String)	GetItem by contact	Conversation turns + transcript
+ 
+3. Data Stores
+3.1 IntentEntityDefinitions Schema
+Each item defines what entities to extract for a specific intent. The Lambda reads this table but never writes to it.
+Partition Key: enterpriseIntent (String)
+Billing Mode: PAY_PER_REQUEST (on-demand)
+Region: us-west-2
+3.1.1 Entity Definition Fields
+Field	Type	Description	Example	Notes
+entityName	String	Unique snake_case key	from_account	Becomes $.External key
+entityType	Enum	CONSTRAINED or OPEN	CONSTRAINED	Drives validation path
+entityDescription	String	Context for Claude	Account to transfer FROM	Disambiguates similar values
+exampleUtterance	String	Natural phone speech	from my savings	Include filler words
+allowedValues	List|null	Valid values (CONSTRAINED)	[checking, savings]	null for OPEN type
+3.1.2 Entity Definition Best Practices
+•	entityName: Use snake_case, be specific (transfer_date not date), match what Connect expects.
+•	entityType: Use CONSTRAINED when a fixed list exists. Never use OPEN for something that has valid values.
+•	entityDescription: Write as if explaining to a new employee. Include directional context ("account to transfer FROM").
+•	exampleUtterance: Use casual phone speech with filler words ("from my savings" not "savings"). The surrounding words teach Claude the speech pattern.
+•	allowedValues: All lowercase, simplest form. Include every valid value. Don’t include synonyms.
+3.2 CollectionConfig Schema
+Each item represents a complete conversation for a single call. The Lambda reads ConversationTurns to extract the transcript.
+Partition Key: ContactId (String)
+Key Fields: Typing, Indexing, CollectedSlots, ActionHistory, ConversationTurns
+3.2.1 Conversation Segment Detection
+The Lambda scans ConversationTurns and groups them into segments. A segment ends when a turn has a trigger of "transfer", "self_service", or "info" AND contains an enterpriseIntent field. Only the last segment is processed.
+Turn 1: no-input-reprompt, UserInput=""               ← Skip
+Turn 2: clarify, UserInput="transfer 100 from savings" ← Collect
+Turn 3: transfer, enterpriseIntent="FUNDS_TRANSFER"    ← Segment 1
+Turn 4: clarify, UserInput="block my card 4532"        ← Collect
+Turn 5: self_service, enterpriseIntent="CARD_BLOCK"    ← Segment 2 (KEPT)
+ 
+4. Lambda Response Format
+Every response is a flat map of string key-value pairs. No nested objects, no arrays, no non-string values. The response contains only entity values and control fields.
+4.1 Response Field Reference
+Field	Values	Present	Purpose
+{entity_name}	Extracted value or NOT_FOUND	When intent has entities	Flat key for Connect prompts and branching
+count	0, 1, 2, 3...	Always	Number of successfully extracted entities
+missing_count	0, 1, 2, 3...	Always	Number of entities still needed
+extraction_complete	true | false	Always	All entities found?
+status	COMPLETE | PARTIAL | EMPTY	Always	Primary flow branching field
+intent	enterpriseIntent string	Always	Which intent was detected
+That is the complete field set. No additional metadata, audit, confidence, disposition, or error detail fields are included in the response.
+4.2 Status Values
+•	COMPLETE: All entities defined for this intent were successfully extracted and validated. count equals the total entity count, missing_count is "0".
+•	PARTIAL: Some entities were extracted but others are missing or failed validation. count is less than total, missing_count is greater than "0". Entity values that failed show "NOT_FOUND".
+•	EMPTY: No entities could be extracted from the transcript. All entity values are "NOT_FOUND", count is "0", missing_count equals the total entity count.
+4.3 Sample Responses
+4.3.1 COMPLETE — All Entities Extracted
+{
+  "from_account": "savings",
+  "to_account": "checking",
+  "amount": "100",
+  "transfer_date": "2026-04-11",
+  "count": "4",
+  "missing_count": "0",
+  "extraction_complete": "true",
+  "status": "COMPLETE",
+  "intent": "BANKING_CHECKING_FUNDS_TRANSFER_INITIATE"
+}
+4.3.2 PARTIAL — Amount Missing
+{
+  "from_account": "savings",
+  "to_account": "checking",
+  "amount": "NOT_FOUND",
+  "transfer_date": "2026-04-11",
+  "count": "3",
+  "missing_count": "1",
+  "extraction_complete": "false",
+  "status": "PARTIAL",
+  "intent": "BANKING_CHECKING_FUNDS_TRANSFER_INITIATE"
+}
+4.3.3 EMPTY — Nothing Found
+{
+  "from_account": "NOT_FOUND",
+  "to_account": "NOT_FOUND",
+  "amount": "NOT_FOUND",
+  "transfer_date": "NOT_FOUND",
+  "count": "0",
+  "missing_count": "4",
+  "extraction_complete": "false",
+  "status": "EMPTY",
+  "intent": "BANKING_CHECKING_FUNDS_TRANSFER_INITIATE"
+}
+4.4 Why This Format
+•	Minimal bytes: ~300-400 bytes for a 4-entity intent. No duplication, no wasted space.
+•	Connect usability: Every field is directly accessible as $.External.{key}. No parsing needed.
+•	Searchable: Flat keys are searchable in contact records and CloudWatch logs.
+•	No stringified JSON: Arrays waste 3-5x the bytes, are unreadable in logs, and Connect cannot parse them.
+•	Downstream Lambda compatibility: The fulfillment Lambda already knows which entities to expect from the intent. It reads flat keys directly, no array parsing needed.
+ 
+5. Validation & Anti-Hallucination
+The system uses six layers of defense to prevent hallucinated or incorrect values from reaching the caller. No single layer is relied upon alone.
+Layer	Applies To	Mechanism	On Failure
+1. Prompt rules	All entities	Strict instructions in system prompt	Claude returns null
+2. AllowedValues	CONSTRAINED only	Hard if-in-list check in code	Entity marked NOT_FOUND
+3. Type validation	OPEN only	Regex + type checks (amount, date, digits)	Entity marked NOT_FOUND
+4. Confidence	All entities	Reject below 0.85 threshold	Entity marked NOT_FOUND
+5. wasExplicit	All entities	Flag if interpreted vs stated	Informs confidence check
+6. temperature=0	All entities	Deterministic LLM output	Same input = same output
+5.1 CONSTRAINED Validation
+For entities with a fixed set of valid values, the validator performs a hard membership check. If Claude returns "bank_account" but allowedValues is ["checking", "savings", "money_market"], the value is immediately rejected. This is the primary anti-hallucination defense for enumerated fields.
+5.2 OPEN Validation
+For free-form entities, the validator applies type-specific checks based on the entity name:
+•	amount, wire_amount, loan_payment_amount, dispute_amount: Valid positive number under 10 million.
+•	transfer_date, payment_date, transaction_date, travel dates, start_date: ISO YYYY-MM-DD format.
+•	routing_number: Exactly 9 digits.
+•	card_last_four: Exactly 4 digits.
+•	account_number, external_account_number: 4-17 digits.
+•	percentage: 0-100.
+5.3 What Happens on Validation Failure
+When any entity fails validation, its value in the response is set to "NOT_FOUND". The count decreases, missing_count increases, and status becomes PARTIAL (or EMPTY if nothing passes). Connect then checks $.External.status and prompts the caller for the missing values.
+ 
+6. Contact Attribute Budget (32 KB)
+AWS Connect enforces a hard limit of 32,768 UTF-8 bytes across all contact attributes. When exceeded in a Set contact attributes block, the contact routes to the Error branch.
+6.1 Byte Estimation
+Category	Fields	Est. Bytes	Notes
+Control fields	status, extraction_complete, count, missing_count, intent	~130 bytes	Fixed size
+Entity values (4 entities)	from_account, to_account, amount, transfer_date	~80 bytes	Scales with entity count
+Lambda 1 attributes	enterpriseIntent, trigger	~80 bytes	Already on contact
+System attributes	Channel, Queue, Agent, etc.	~1-2 KB	Connect managed
+TOTAL (4 entity intent)	All above	~300-400 bytes	Well under 32 KB
+TOTAL (15 entity intent)	All above scaled	~800-1000 bytes	Still safe
+6.2 Budget Management Best Practices
+•	Use flow attributes for temporary data that doesn’t need to persist across flows.
+•	Clean up attributes by setting value to empty string ("") once no longer needed.
+•	Never use stringified JSON arrays. They duplicate data and waste 3-5x the bytes.
+•	Keep attribute keys short: from_account (12 bytes) not customer_source_account_name (30 bytes).
+•	Save Lambda 2 values to $.Attributes before invoking Lambda 3, since $.External is overwritten.
+•	Audit total attribute size periodically when adding new intents with many entities.
+ 
+7. Connect Flow Integration
+7.1 Flow Branching Pattern
+[Check $.External.status]
+  ├─ "COMPLETE" → Confirm with caller → Fulfill
+  ├─ "PARTIAL"  → Check $.External.{entity} == "NOT_FOUND"
+  │     → Prompt for each NOT_FOUND entity
+  │     → Loop back to Lambda 2
+  └─ "EMPTY"    → "Could you repeat that?"
+        → Loop back to Lambda 2
+7.2 Using Entity Values in Prompts
+Play prompt blocks directly reference flat keys:
+"I'll transfer $.External.amount dollars from your
+ $.External.from_account to your $.External.to_account.
+ Is that correct?"
+Caller hears: "I’ll transfer 100 dollars from your savings to your checking. Is that correct?"
+7.3 Handling NOT_FOUND in PARTIAL
+When status is PARTIAL, check each entity value for NOT_FOUND to determine which prompts to play:
+[Check $.External.from_account]
+  ├─ "NOT_FOUND" → Play: "Which account to transfer from?"
+  └─ Any other   → Skip (already have it)
+
+[Check $.External.amount]
+  ├─ "NOT_FOUND" → Play: "How much to transfer?"
+  └─ Any other   → Skip
+7.4 Attribute Persistence Across Lambdas
+$.External is completely replaced when a new Lambda is invoked. Save Lambda 2 values to $.Attributes before calling Lambda 3:
+[Lambda 2 returns] → $.External.from_account = "savings"
+      ↓
+[Set contact attributes]
+  Key: from_account   Value: $.External.from_account
+  Key: amount         Value: $.External.amount
+      ↓
+[Lambda 3: Fulfillment] → $.External is overwritten
+      ↓
+$.Attributes.from_account = "savings"       ← Preserved
+$.External.confirmation_number = "TXN-001"  ← From Lambda 3
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+flowchart TD
+    %% ── ENTRY POINT ──
+    A["<b>LAMBDA 2: ENTRY POINT</b><br/>lambda_handler(event, context)<br/><br/>ContactId = event.Details.ContactData.ContactId<br/><i>(auto-injected by Connect)</i><br/><br/>enterpriseIntent = event.Details.Parameters.enterpriseIntent<br/><i>(passed from upstream Lambda 1 via Connect)</i>"]
+
+    %% ── STEP 1 ──
+    A --> B["<b>STEP 1: Read CollectionConfig</b><br/>(DynamoDB)<br/><br/>get_item(ContactId)<br/>Scan ConversationTurns<br/>Find last segment<br/>(trigger = transfer | self_service | info)<br/>Extract transcript from UserInput"]
+
+    B --> C{"No segment<br/>found?"}
+    C -->|YES| R1["Return<br/><b>status: EMPTY</b><br/>extraction_complete: false"]
+    C -->|NO| D
+
+    %% ── STEP 2 ──
+    D["<b>STEP 2: Fetch Entity Definitions</b><br/>(DynamoDB)<br/><br/>get_item(enterpriseIntent)<br/>from IntentEntityDefinitions table"]
+
+    D --> E{"No definitions<br/>found?"}
+    E -->|YES| R2["Return<br/><b>status: EMPTY</b><br/>extraction_complete: false"]
+    E -->|NO| F
+
+    %% ── STEP 3 ──
+    F["<b>STEP 3: Build Extraction Prompt</b><br/><br/>for entity in entity_definitions:<br/>├─ CONSTRAINED → Must be one of: [allowed values]<br/>└─ OPEN → Free-form, extract exact meaning<br/>+ entityDescription + exampleUtterance"]
+
+    F --> G
+
+    %% ── STEP 4 ──
+    G["<b>STEP 4: Call Bedrock</b><br/><br/>Model: Claude Opus 4.6<br/>temperature = 0 (deterministic)<br/>Send: system_prompt + transcript<br/>Receive: JSON with value, confidence,<br/>wasExplicit per entity"]
+
+    G --> H{"Bedrock<br/>error?"}
+    H -->|YES| R3["Return<br/><b>status: EMPTY</b><br/>extraction_complete: false"]
+    H -->|NO| I
+
+    %% ── STEP 5 ──
+    I["<b>STEP 5: Parse JSON Response</b><br/><br/>Strip markdown fences if present<br/>json.loads() → extract entities dict"]
+
+    I --> J{"Parse<br/>error?"}
+    J -->|YES| K["All entities → NOT_FOUND<br/>(added to missing list)"]
+    J -->|NO| L
+
+    K --> L
+
+    %% ── STEP 6 ──
+    L["<b>STEP 6: Validate Each Entity</b>"]
+    L --> L1{"Is date<br/>field?"}
+
+    L1 -->|NO| L2{"wasExplicit<br/>= false?"}
+    L2 -->|YES| REJ["<b>REJECT</b><br/>→ NOT_FOUND"]
+    L2 -->|NO| L3
+
+    L1 -->|"YES<br/>(skip wasExplicit)"| L3
+
+    L3{"Confidence<br/>< 0.95?"}
+    L3 -->|YES| REJ
+    L3 -->|NO| L4
+
+    L4{"Entity<br/>type?"}
+    L4 -->|CONSTRAINED| L5{"Value in<br/>allowedValues?"}
+    L5 -->|NO| REJ
+    L5 -->|YES| ACC["<b>ACCEPT</b>"]
+
+    L4 -->|OPEN| L6{"Passes type<br/>validation?<br/><i>amount → number</i><br/><i>date → ISO format</i><br/><i>routing → 9 digits</i><br/><i>card → 4 digits</i>"}
+    L6 -->|NO| REJ
+    L6 -->|YES| ACC
+
+    REJ --> COLLECT["Collect: extracted{ } + missing[ ]"]
+    ACC --> COLLECT
+
+    %% ── STEP 7 ──
+    COLLECT --> M["<b>STEP 7: Build Flat Response</b><br/>(build_connect_response)<br/><br/>for each entity_def:<br/>├─ extracted → result[name] = value<br/>└─ missing → result[name] = NOT_FOUND<br/><br/>result[count] = found_count<br/>result[missing_count] = missing_count<br/>result[extraction_complete] = true/false<br/>result[intent] = enterprise_intent"]
+
+    M --> N{"missing_count<br/>== 0?"}
+    N -->|YES| S1["<b>status = COMPLETE</b>"]
+    N -->|NO| O{"found_count<br/>> 0?"}
+    O -->|YES| S2["<b>status = PARTIAL</b>"]
+    O -->|NO| S3["<b>status = EMPTY</b>"]
+
+    S1 --> RET["<b>RETURN flat map to Connect</b><br/>Every key accessible as $.External.{key}"]
+    S2 --> RET
+    S3 --> RET
+
+    %% ── STYLES ──
+    classDef entryBox fill:#1F4E79,stroke:#1F4E79,color:#FFFFFF,font-weight:bold
+    classDef stepBox fill:#E8F0FE,stroke:#2E75B6,color:#1F4E79,font-weight:bold
+    classDef decisionBox fill:#FFF3CD,stroke:#D4A017,color:#333333
+    classDef rejectBox fill:#FADBD8,stroke:#E74C3C,color:#922B21,font-weight:bold
+    classDef acceptBox fill:#D5F5E3,stroke:#27AE60,color:#1E8449,font-weight:bold
+    classDef returnBox fill:#1F4E79,stroke:#1F4E79,color:#FFFFFF,font-weight:bold
+    classDef earlyReturn fill:#F5CBA7,stroke:#E67E22,color:#784212
+
+    class A entryBox
+    class B,D,F,G,I,L,M stepBox
+    class C,E,H,J,L1,L2,L3,L4,L5,L6,N,O decisionBox
+    class REJ rejectBox
+    class ACC acceptBox
+    class RET,R1,R2,R3 returnBox
+    class K earlyReturn
+    class S1 acceptBox
+    class S2 earlyReturn
+    class S3 rejectBox
+    class R1,R2,R3 earlyReturn
+    class COLLECT stepBox
