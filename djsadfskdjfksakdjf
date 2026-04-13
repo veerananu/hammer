@@ -1,0 +1,93 @@
+flowchart TD
+    %% ── ENTRY POINT ──
+    A["<b>ENTRY POINT</b><br/><br/>ContactId<br/>enterpriseIntent"]
+
+    %% ── READ COLLECTION CONFIG ──
+    A --> B["<b>Read CollectionConfig</b><br/>(DynamoDB)<br/><br/>Scan ConversationTurns<br/>Check Trigger (transfer | self_service | info)<br/>Extract UserInput"]
+
+    B --> C{"No segment<br/>found?"}
+    C -->|YES| R1["Return<br/><b>status: EMPTY</b><br/>extraction_complete: false"]
+    C -->|NO| D
+
+    %% ── FETCH ENTITY DEFINITIONS ──
+    D["<b>Fetch Entity Definitions</b><br/>(DynamoDB)<br/><br/>get_item(enterpriseIntent)<br/>from IntentEntityDefinitions table"]
+
+    D --> E{"No definitions<br/>found?"}
+    E -->|YES| R2["Return<br/><b>status: EMPTY</b><br/>extraction_complete: false"]
+    E -->|NO| F
+
+    %% ── BUILD EXTRACTION PROMPT ──
+    F["<b>Build Extraction Prompt</b><br/><br/>for entity in entity_definitions:<br/>├─ CONSTRAINED → Must be one of: [allowed values]<br/>└─ OPEN → Free-form, extract exact meaning<br/>+ entityDescription + exampleUtterance"]
+
+    F --> G
+
+    %% ── CALL BEDROCK ──
+    G["<b>Call Bedrock</b><br/><br/>temperature = 0 (deterministic)<br/>Send: system_prompt + transcript<br/>Receive: JSON with value, confidence<br/>per entity"]
+
+    G --> H{"Bedrock<br/>error?"}
+    H -->|YES| R3["Return<br/><b>status: EMPTY</b><br/>extraction_complete: false"]
+    H -->|NO| I
+
+    %% ── PARSE JSON RESPONSE ──
+    I["<b>Parse JSON Response</b><br/><br/>Strip markdown fences if present<br/>json.loads() → extract entities dict"]
+
+    I --> J{"Parse<br/>error?"}
+    J -->|YES| K["All entities → nil<br/>(added to missing list)"]
+    J -->|NO| L
+
+    K --> L
+
+    %% ── VALIDATE EACH ENTITY ──
+    L["<b>Validate Each Entity</b>"]
+    L --> L3
+
+    L3{"Confidence<br/>< 85%?"}
+    L3 -->|YES| REJ["<b>REJECT</b><br/>→ nil"]
+    L3 -->|NO| L4
+
+    L4{"Entity<br/>type?"}
+    L4 -->|CONSTRAINED| L5{"Value in<br/>allowedValues?<br/><i>e.g. checking, savings,<br/>money_market</i>"}
+    L5 -->|NO| REJ
+    L5 -->|YES| ACC["<b>ACCEPT</b>"]
+
+    L4 -->|OPEN| L6{"Passes type<br/>validation?<br/><i>amount → positive number</i><br/><i>date → YYYY-MM-DD</i><br/><i>routing → 9 digits</i><br/><i>card_last_four → 4 digits</i><br/><i>phone → 10-11 digits</i><br/><i>percentage → 0-100</i>"}
+    L6 -->|NO| REJ
+    L6 -->|YES| ACC
+
+    REJ --> COLLECT["Collect: extracted{ } + missing[ ]"]
+    ACC --> COLLECT
+
+    %% ── BUILD FLAT RESPONSE ──
+    COLLECT --> M["<b>Build Flat Response</b><br/><br/>for each entity_def:<br/>├─ extracted → result[name] = value<br/>└─ missing → result[name] = NOT_FOUND<br/><br/>result[count] = found_count<br/>result[missing_count] = missing_count<br/>result[extraction_complete] = true/false<br/>result[intent] = enterprise_intent"]
+
+    M --> N{"missing_count<br/>== 0?"}
+    N -->|YES| S1["<b>status = COMPLETE</b><br/>extraction_complete = true"]
+    N -->|NO| O{"found_count<br/>> 0?"}
+    O -->|YES| S2["<b>status = PARTIAL</b><br/>extraction_complete = true"]
+    O -->|NO| S3["<b>status = EMPTY</b><br/>extraction_complete = false"]
+
+    S1 --> RET["<b>RETURN flat map to Connect</b><br/>Every key accessible as $.External.{key}"]
+    S2 --> RET
+    S3 --> RET
+
+    %% ── STYLES ──
+    classDef entryBox fill:#1F4E79,stroke:#1F4E79,color:#FFFFFF,font-weight:bold
+    classDef stepBox fill:#E8F0FE,stroke:#2E75B6,color:#1F4E79,font-weight:bold
+    classDef decisionBox fill:#FFF3CD,stroke:#D4A017,color:#333333
+    classDef rejectBox fill:#FADBD8,stroke:#E74C3C,color:#922B21,font-weight:bold
+    classDef acceptBox fill:#D5F5E3,stroke:#27AE60,color:#1E8449,font-weight:bold
+    classDef returnBox fill:#1F4E79,stroke:#1F4E79,color:#FFFFFF,font-weight:bold
+    classDef earlyReturn fill:#F5CBA7,stroke:#E67E22,color:#784212
+
+    class A entryBox
+    class B,D,F,G,I,L,M stepBox
+    class C,E,H,J,L3,L4,L5,L6,N,O decisionBox
+    class REJ rejectBox
+    class ACC acceptBox
+    class RET returnBox
+    class K earlyReturn
+    class S1 acceptBox
+    class S2 acceptBox
+    class S3 rejectBox
+    class R1,R2,R3 earlyReturn
+    class COLLECT stepBox
