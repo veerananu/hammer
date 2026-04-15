@@ -1,0 +1,100 @@
+flowchart TD
+    A(["ENTRY POINT<br/>ContactId · Destination Id"])
+
+    B["Read iva-intent-collection-config<br/>Scan ConversationTurns<br/>Check Trigger: transfer / self_service / info<br/>Extract UserInput"]
+
+    C{Segment<br/>found?}
+    EMPTY1(["✕ EMPTY<br/>status: false"])
+
+    E["Fetch iva-entity-config<br/>get_item destinationId<br/>IntentEntityDefinitions table"]
+
+    F{Definitions<br/>found?}
+    EMPTY2(["✕ EMPTY<br/>status: false"])
+
+    H["Build Extraction Prompt<br/>CONSTRAINED: must match allowed values<br/>OPEN: free-form, null if absent<br/>Confidence rules + validation rules embedded"]
+
+    subgraph LLM ["LLM — Bedrock"]
+        I["Call Bedrock API with deterministic setting · temperature = 0<br/>Receives extraction instructions + customer transcript<br/>Extracts entity values and self-scores each as HIGH · MED · LOW<br/>Returns raw text string only · no parsing · no decisions"]
+    end
+
+    J{Bedrock<br/>error?}
+    EMPTY3(["✕ EMPTY<br/>status: false"])
+
+    subgraph CODE ["Parsing & Validation"]
+        L["Parse LLM output<br/>Strip markdown fences if present<br/>json.loads() · verify structure<br/>LLM output never trusted directly"]
+        M{Parse or<br/>structure<br/>error?}
+        N["Fallback<br/>All entities → NILL<br/>Added to missing list"]
+        LOOP[/"For each entity"/]
+        O{"Confidence below<br/>threshold?"}
+        P(["✕ REJECT → NILL"])
+        Q{"Entity<br/>type?"}
+        R{"Value in<br/>allowedValues?<br/>e.g. checking, savings"}
+        REJECT_C(["✕ REJECT → NILL"])
+        ACCEPT_C(["✓ ACCEPT"])
+        U{"Passes type<br/>validation?<br/>amount · date · phone…"}
+        REJECT_O(["✕ REJECT → NILL"])
+        ACCEPT_O(["✓ ACCEPT"])
+        X["Collect results<br/>extracted · missing"]
+    end
+
+    Y["Build response — array of objects<br/>Each entity → { name, value, description }<br/>Accepted: value = extracted string<br/>Rejected: value = NILL<br/>Appended entries: { name: count } · { name: missing_count }<br/>Serialised as JSON.stringify before return"]
+
+    Z{"missing_count == 0?<br/>All entities found?"}
+    AA(["✓ COMPLETE<br/>g_entity_extraction_status = true"])
+    AB{"found_count > 0?<br/>At least one found?"}
+    AC(["◑ PARTIAL<br/>g_entity_extraction_status = true"])
+    AD(["✕ EMPTY<br/>g_entity_extraction_status = false"])
+    AE(["RETURN<br/>entities: JSON stringified array of objects"])
+
+    A --> B --> C
+    C -- "No segment" --> EMPTY1
+    C -- "Segment found" --> E --> F
+    F -- "No definitions" --> EMPTY2
+    F -- "Definitions found" --> H --> I --> J
+    J -- "Yes" --> EMPTY3
+    J -- "No" --> L --> M
+    M -- "Yes" --> N --> LOOP
+    M -- "No" --> LOOP
+    LOOP --> O
+    O -- "Yes → reject" --> P --> X
+    O -- "No → continue" --> Q
+    Q -- "CONSTRAINED" --> R
+    Q -- "OPEN" --> U
+    R -- "Not in list" --> REJECT_C --> X
+    R -- "In list" --> ACCEPT_C --> X
+    U -- "Invalid" --> REJECT_O --> X
+    U -- "Valid" --> ACCEPT_O --> X
+    X --> Y --> Z
+    Z -- "Yes" --> AA --> AE
+    Z -- "No" --> AB
+    AB -- "Yes" --> AC --> AE
+    AB -- "No" --> AD --> AE
+
+    classDef entry fill:#003366,color:#ffffff,stroke:#003366,font-weight:bold
+    classDef process fill:#E6F1FB,color:#0C447C,stroke:#185FA5,stroke-width:1.5px
+    classDef prompt fill:#EEEDFE,color:#26215C,stroke:#534AB7,stroke-width:1.5px
+    classDef decision fill:#FAEEDA,color:#412402,stroke:#BA7517,stroke-width:1.5px
+    classDef reject fill:#FCEBEB,color:#660000,stroke:#A32D2D,stroke-width:1.5px,font-weight:bold
+    classDef accept fill:#EAF3DE,color:#173404,stroke:#3B6D11,stroke-width:1.5px,font-weight:bold
+    classDef earlyExit fill:#FAECE7,color:#4A1B0C,stroke:#993C1D,stroke-width:1.5px
+    classDef complete fill:#EAF3DE,color:#173404,stroke:#3B6D11,stroke-width:1.5px
+    classDef partial fill:#FAEEDA,color:#412402,stroke:#BA7517,stroke-width:1.5px
+    classDef empty fill:#FCEBEB,color:#660000,stroke:#A32D2D,stroke-width:1.5px
+    classDef returnNode fill:#003366,color:#ffffff,stroke:#003366,font-weight:bold
+    classDef fallback fill:#FAECE7,color:#4A1B0C,stroke:#993C1D,stroke-width:1.5px
+    classDef loop fill:#E1F5EE,color:#04342C,stroke:#0F6E56,stroke-width:1.5px
+
+    class A entry
+    class B,E process
+    class H prompt
+    class C,F,J,M,O,Q,R,U,Z,AB decision
+    class P,REJECT_C,REJECT_O reject
+    class ACCEPT_C,ACCEPT_O accept
+    class EMPTY1,EMPTY2,EMPTY3 earlyExit
+    class N fallback
+    class L,X,Y process
+    class AA,AC complete
+    class AD empty
+    class AE returnNode
+    class LOOP loop
+    class I process
