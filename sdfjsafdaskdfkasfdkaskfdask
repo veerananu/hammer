@@ -1,0 +1,330 @@
+# Building the CDA Flow in Amazon Connect
+
+A step-by-step guide to recreating the ABC CDA SMS-link offer flow as an Amazon Connect contact flow, matching the CDA LLD.
+
+## What this flow does
+
+A caller is on the line. At some point (after intent capture, during a long queue wait, during a transfer, etc.), this sub-flow runs. It:
+
+1. Checks whether the caller is eligible for a CDA offer for the current intent
+2. Enforces the "one offer per call" rule, unless the capability is flagged to always be offered
+3. Asks the member (via Lex) if they'd like a link texted to their phone
+4. If yes, fetches a deep link and sends the SMS (two separate API calls)
+5. Either returns to the main flow immediately (`RESUME`) or hands off to a Lex wait/resume module while the member tries the link (`WAIT_OPTION`)
+
+## Prerequisites
+
+Before importing or building, set these up in AWS:
+
+### 1. Lambda: Eligibility Check
+Takes: `memberId`, `intent`
+Returns (as flat string map — Connect requirement):
+```
+{
+  "eligibility": "ELIGIBLE_MEMBER" | "INELIGIBLE_MEMBER" | "INELIGIBLE_INTENT",
+  "prompt": "Would you like me to text you a link to check your payoff amount?",
+  "capability": "AUTOLOANPAYOFFAMOUNT",
+  "capabilityAlwaysOffer": "false"
+}
+```
+The Lambda must signal API failure via its error branch distinctly from returning `INELIGIBLE_*` — the flow treats these as separate exit paths.
+
+### 2. Lambda: Get Link
+Takes: `memberId`, `memberGuid`, `capability`
+Returns: `{ "success": "true" }`
+
+### 3. Lambda: Send SMS
+Takes: `phoneNumber` (use `$.CustomerEndpoint.Address`), `memberId`, `memberGuid`, `capability`, `aniCountryCode`
+Returns: `{ "success": "true" }`
+
+### 4. Two Amazon Lex bots
+- **CDA300** — the offer pitch. Intents for `Yes Captured`, `No Captured`, `Route to Rep`, with max retries configured (typically 2). Wait & Resume `Off`.
+- **CDA200** — the wait/resume handler (used only in `WAIT_OPTION`). Wait & Resume `On`. Sets `a_wait_exit_resume_no_response = true` on silence timeout.
+
+### 5. An end destination
+- A "transfer to flow" target (your main flow)
+- Or a "disconnect flow" if the call ends here
+
+## The flow, block by block
+
+### Block 1 — Set contact attributes (initialize)
+
+Type: `Set contact attributes`
+
+Set these as **user-defined** attributes:
+
+| Key | Value | Purpose |
+|---|---|---|
+| `a_cda_offered` | `false` | Tracks if we've already pitched this call |
+| `a_cda_type` | `WAIT_OPTION` | Default behavior — can be overridden by the calling flow |
+| `a_enable_master_cda_switch` | `true` | Master kill switch (in real use, read from DynamoDB or AppConfig) |
+
+`a_cda_intent`, `a_member_id`, `a_member_guid`, and `a_call_ani` should already be set by the parent flow. Don't default them here.
+
+Connects to: Block 2 (master switch check)
+
+### Block 2 — Check contact attributes (master switch)
+
+Type: `Check contact attributes`
+
+- Attribute: `User Defined → a_enable_master_cda_switch`
+- Condition: `Equals → true`
+- Condition path → Block 3
+- No Match → Block 22 (set exit reason `DISABLED`, transfer)
+
+### Block 3 — Check contact attributes (intent passed in?)
+
+Type: `Check contact attributes`
+
+- Attribute: `a_cda_intent`
+- Condition: attribute is null / empty
+- **Null** → Block 4 (fallback to route intent)
+- **Not null** → Block 5 (eligibility Lambda)
+
+*This block is load-bearing. Self-service flows can pre-set `a_cda_intent` to a more specific capability than the router captured. If they didn't, we fall back to `a_route_intent` in the next block.*
+
+### Block 4 — Set contact attributes (intent fallback)
+
+Type: `Set contact attributes`
+
+- `a_cda_intent` = `$.Attributes.a_route_intent`
+
+Connects to: Block 5
+
+### Block 5 — Invoke AWS Lambda function (Eligibility)
+
+Type: `Invoke AWS Lambda function`
+
+- Function ARN: *your eligibility Lambda ARN*
+- Timeout: 8 seconds
+- Input parameters:
+  - `memberId` = `$.Attributes.a_member_id`
+  - `intent` = `$.Attributes.a_cda_intent`
+
+Connects to: Block 6
+Error path: Block 22 with reason `API_FAILURE`
+
+### Block 6 — Set contact attributes (store Lambda response)
+
+Type: `Set contact attributes`
+
+- `b_cda_eligibility` = `$.External.eligibility`
+- `b_cda_prompt` = `$.External.prompt`
+- `b_cda_capability` = `$.External.capability`
+- `b_cda_capability_always_offer` = `$.External.capabilityAlwaysOffer`
+
+Connects to: Block 7
+
+### Block 7 — Check contact attributes (eligibility)
+
+Type: `Check contact attributes`
+
+- Attribute: `b_cda_eligibility`
+- Conditions:
+  - `Equals ELIGIBLE_MEMBER` → Block 8
+  - `Equals INELIGIBLE_INTENT` → Block 22 with reason `INELIGIBLE`
+  - `Equals INELIGIBLE_MEMBER` → Block 22 with reason `INELIGIBLE`
+- No Match → Block 22 with reason `API_FAILURE`
+
+*Four branches, not two. Business-logic ineligibility and API failure both route to exit, but via different exit reasons.*
+
+### Block 8 — Check contact attributes (always-offer override)
+
+Type: `Check contact attributes`
+
+- Attribute: `b_cda_capability_always_offer`
+- Condition: `Equals → true`
+- **True** → Block 10 (skip dedup, go straight to offer)
+- **False / no match** → Block 9
+
+*Order matters. Always-offer is checked first. If the capability is flagged always-offer, the dedup check is bypassed entirely.*
+
+### Block 9 — Check contact attributes (already offered?)
+
+Type: `Check contact attributes`
+
+- Attribute: `a_cda_offered`
+- Condition: `Equals → true`
+- **True** → Block 22 with reason `INELIGIBLE` (we've already pitched this caller)
+- **False** → Block 10
+
+### Block 10 — Set contact attributes (mark as offered)
+
+Type: `Set contact attributes`
+
+- `a_cda_offered` = `true`
+
+Connects to: Block 11
+
+### Block 11 — Run Amazon Lex bot (CDA300 — the pitch)
+
+Type: `Run Amazon Lex bot`
+
+- Bot: `CDA300`
+- Prompt: `$.Attributes.b_cda_prompt` (dynamic — from the eligibility API)
+- Settings: Wait & Resume `Off`, Help `Off`
+- Max NMNI retries: 2
+
+Branches:
+- **Yes Captured** → Block 12 (Get Link)
+- **No Captured** → Block 22 with reason `MEMBER_DECLINED`, then play "No problem." before transfer
+- **Route to Rep** → Block 22 with reason `REP`, then play "Alright." before transfer
+- **Max NMNI Retries** → Block 22 with reason `MAX_ERRORS`
+
+### Block 12 — Invoke AWS Lambda function (Get Link)
+
+Type: `Invoke AWS Lambda function`
+
+- Function ARN: *your Get Link Lambda ARN*
+- Timeout: 8 seconds
+- Input:
+  - `memberId` = `$.Attributes.a_member_id`
+  - `memberGuid` = `$.Attributes.a_member_guid`
+  - `capability` = `$.Attributes.b_cda_capability`
+
+Connects to: Block 13
+Error: Block 21 ("technical issue" prompt, then Block 22 with reason `API_FAILURE`)
+
+### Block 13 — Check contact attributes (Get Link success)
+
+- Set `b_cda_success` = `$.External.success` (from Block 12 response)
+- Condition: `Equals true` → Block 14
+- No match → Block 21 ("technical issue"), then Block 22 with reason `API_FAILURE`
+
+*In Connect, this is two chained blocks — a `Set contact attributes` to capture `$.External.success`, then a `Check contact attributes` on `b_cda_success`.*
+
+### Block 14 — Invoke AWS Lambda function (Send SMS)
+
+Type: `Invoke AWS Lambda function`
+
+- Function ARN: *your Send SMS Lambda ARN*
+- Timeout: 8 seconds
+- Input:
+  - `phoneNumber` = `$.CustomerEndpoint.Address`
+  - `memberId` = `$.Attributes.a_member_id`
+  - `memberGuid` = `$.Attributes.a_member_guid`
+  - `capability` = `$.Attributes.b_cda_capability`
+  - `aniCountryCode` = `$.Attributes.b_ani_country_code`
+
+Connects to: Block 15
+Error: Block 21 ("technical issue"), then Block 22 with reason `API_FAILURE`
+
+### Block 15 — Check contact attributes (Send SMS success)
+
+- Set `b_cda_success` = `$.External.success`
+- Condition: `Equals true` → Block 16
+- No match → Block 21, then Block 22 with reason `API_FAILURE`
+
+### Block 16 — Check contact attributes (CDA type branch)
+
+- Attribute: `a_cda_type`
+- `Equals RESUME` → Block 17
+- `Equals WAIT_OPTION` → Block 18
+- No match → Block 17 (safe default)
+
+### Block 17 — Play prompt (RESUME)
+
+- Text: `Alright, that text should be coming through shortly.`
+- Then → Block 22 with reason `CDA_COMPLETED`
+
+### Block 18 — Run Amazon Lex bot (CDA200 — wait & resume)
+
+Type: `Run Amazon Lex bot`
+
+- Bot: `CDA200`
+- Prompt: `Great. Once that text comes through you can use the link to continue in the mobile app. Let me know if you'd like me to wait while you try it out.`
+- Settings: Wait & Resume `On`
+
+Branches:
+- **Continue Captured** (member returned) → Block 22 with reason `CDA_COMPLETED`
+- **Wait timeout / no response** (bot sets `a_wait_exit_resume_no_response = true`) → Block 19
+
+*The Lex wait-and-resume pattern mutes the bot, listens for a wake word or silence timeout, and routes back into the flow based on what it hears. This replaces the simple `Wait` block — it's how you get barge-in and resume-on-speech behavior.*
+
+### Block 19 — Check contact attributes (wait timeout?)
+
+- Attribute: `a_wait_exit_resume_no_response`
+- `Equals true` → Block 20 (goodbye)
+- No match → Block 22 with reason `CDA_COMPLETED`
+
+### Block 20 — Play prompt + Disconnect (wait timeout)
+
+- Text: `Since I haven't heard anything, I'll end the call for now. Thanks for calling ABC. Goodbye.`
+- Then → `Disconnect` block
+
+### Block 21 — Play prompt (SMS failure)
+
+- Text: `There was a technical issue with sending the text, so let's continue for now.`
+- Then → Block 22 with reason `API_FAILURE`
+
+### Block 22 — Set contact attributes (exit reason) + Transfer to flow
+
+- `a_cda_exit_reason` = one of: `DISABLED`, `INELIGIBLE`, `API_FAILURE`, `MEMBER_DECLINED`, `REP`, `MAX_ERRORS`, `CDA_COMPLETED`
+- Then → `Transfer to flow` → your main flow
+
+*In Connect, this is implemented as multiple `Set contact attributes` blocks (one per exit reason) all feeding into a single `Transfer to flow`. The "No problem." and "Alright." prompts from Block 11's No/Rep branches sit between their respective exit-reason setters and the transfer.*
+
+## Attribute cheat sheet
+
+| Attribute | Type | Set by | Purpose |
+|---|---|---|---|
+| `a_enable_master_cda_switch` | a_ (global) | Parent flow / config | Kill switch |
+| `a_route_intent` | a_ | Router / GenAI | Router-captured intent |
+| `a_cda_intent` | a_ | Parent flow (optional), else Block 4 | Which capability to check — can override `a_route_intent` |
+| `a_cda_type` | a_ | Parent flow (defaults here) | `RESUME` or `WAIT_OPTION` |
+| `a_cda_offered` | a_ | This flow | Tracks one-offer-per-call |
+| `a_cda_exit_reason` | a_ | This flow | How this flow ended |
+| `a_member_id` | a_ | Parent flow | Member identifier |
+| `a_member_guid` | a_ | Parent flow | Member GUID (SMS API input) |
+| `a_call_ani` | a_ | Parent flow or endpoint address | Caller phone number |
+| `a_wait_exit_resume_no_response` | a_ | CDA200 bot | Wait/resume silence timeout flag |
+| `b_cda_eligibility` | b_ (temp) | Eligibility Lambda | `ELIGIBLE_MEMBER` etc. |
+| `b_cda_prompt` | b_ | Eligibility Lambda | The pitch text |
+| `b_cda_capability` | b_ | Eligibility Lambda | Capability code for SMS |
+| `b_cda_capability_always_offer` | b_ | Eligibility Lambda | Override one-offer rule |
+| `b_cda_success` | b_ | Get Link + Send SMS | API call succeeded |
+| `b_ani_country_code` | b_ | Parent flow | Country code for SMS send |
+
+The `a_` / `b_` convention is borrowed from the original ABC doc — global vs. transient. Connect doesn't enforce this; it's just a naming habit to keep things readable.
+
+## Testing
+
+1. Publish the flow
+2. Attach it to a phone number (or call it as a sub-flow from your main flow)
+3. Use CloudWatch Logs — every block logs what happened, which branch was taken, and the attribute values
+4. Test each exit path:
+   - Master switch off → `DISABLED`
+   - Ineligible member (both `INELIGIBLE_INTENT` and `INELIGIBLE_MEMBER`) → `INELIGIBLE`
+   - Declined offer → `MEMBER_DECLINED`
+   - Asked for rep → `REP`
+   - Timed out on pitch → `MAX_ERRORS`
+   - Get Link failure → `API_FAILURE`
+   - Send SMS failure → `API_FAILURE`
+   - Successful SMS with `RESUME` → `CDA_COMPLETED` immediately after confirmation
+   - Successful SMS with `WAIT_OPTION` + member returns → `CDA_COMPLETED`
+   - Successful SMS with `WAIT_OPTION` + timeout → goodbye + disconnect
+   - Always-offer override — flag a capability with `capabilityAlwaysOffer=true`, pre-set `a_cda_offered=true`, confirm the offer still runs
+
+## Import instructions
+
+1. Open Amazon Connect console → Routing → Flows → Create contact flow
+2. Click the three-dot menu in the top right → **Import flow**
+3. Select `cda-contact-flow.json`
+4. Open each **Invoke AWS Lambda function** block and paste your actual ARNs (three separate ones: Eligibility, Get Link, Send SMS)
+5. Open each **Run Amazon Lex bot** block and attach the correct bot alias (CDA300 for the pitch, CDA200 for wait/resume)
+6. Open the final "Transfer to flow" block and pick your return-to-main flow
+7. Save → Publish
+
+The imported flow won't work until the Lambda ARNs, Lex aliases, and transfer target are set — that's expected.
+
+## What to tweak for your use case
+
+- **Prompts**: The doc hardcodes ABC-specific wording. Either inline the text on each `Play prompt` block, or upload pre-recorded audio files to Connect and reference them by prompt ID.
+- **Wait & Resume timeout**: this is a Lex bot setting on CDA200, not a flow setting. Start around 60–90 seconds and tune based on real data.
+- **Error handling**: Every Lambda block and Check Attribute block has an Error branch. Default them all to Block 21 (or directly to Block 22 with `API_FAILURE`) during initial build — don't leave any unconnected.
+- **Block naming**: Consider naming the Connect blocks with the source LLD IDs (`CDACHK010`, `CDASET010`, etc.) in addition to the sequential Block numbers used here. It makes cross-referencing the LLD during debugging much faster.
+
+## Deviations from the source LLD
+
+- Standardized `API_FAILED` → `API_FAILURE` and `MEMBER_INELIGIBLE` → `INELIGIBLE` across all `Set contact attributes` blocks to match the documented output contract. The source LLD flow diagrams spell these inconsistently.
+- The LLD reuses `CDASET110` for both "mark offered" and "track declined". In the Connect build, keep those as two distinct blocks with distinct names.
