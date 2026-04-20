@@ -1,0 +1,284 @@
+Let me now write them one by one. Starting with Week 1.
+
+Week 1 — Sprint 1
+
+Story 1 — Create DynamoDB Table
+As a developer
+I want to create the df table in DynamoDB
+So that we have a place to store entity definitions that the Lambda will read
+What needs to happen:
+
+Create the table in AWS dev environment
+Table name: IntentEntityDefinitions
+Partition key: destinationId
+Sort key: entityKey
+Each record will store: entity name, type, description, allowed values, validation type, confidence threshold, example utterance
+
+Done when:
+
+Table exists in AWS dev
+Partition key and sort key are correct
+A sample record can be inserted and read back successfully
+
+Story Points: 3
+
+That is Story 1. Simple and focused — one thing only.
+Shall I write Story 2 now — sitting with business to define the entities?go head8:26 PM
+Week 2 — Sprint 2
+
+Story 2 — Define Entity Definitions with Business
+As a developer
+I want to sit with the business team and agree on what entities need to be extracted
+So that we know exactly what data to load into the DynamoDB table before building anything
+What needs to happen:
+
+Developer and business team sit together
+Go through each self service flow and identify what information needs to be captured from the customer
+For each entity agree on:
+
+What is the entity name? e.g. account_type
+Is it CONSTRAINED (must match a list) or OPEN (free form)?
+If CONSTRAINED — what are the allowed values? e.g. checking, savings, money_market
+If OPEN — what format is expected? e.g. date, amount, phone number
+What is a good example of how a customer would say this?
+What confidence level is acceptable — HIGH, MED, or LOW?
+
+
+All agreed entities documented in a shared document
+Document reviewed and signed off by business and tech lead
+
+Done when:
+
+All entities are identified and documented
+Every entity has a type, description, allowed values or validation type, and example utterance
+Business and tech lead have signed off on the document
+Developer is ready to load data in the next story
+
+Story Points: 3
+
+That is Story 2. Notice it has no code — just a conversation and a document. But it is a real story because without it Story 3 cannot start.
+Shall I write Story 3 now — loading the data into the table?proceed don't ask me8:27 PM
+Story 3 — Load Entity Definitions into DynamoDB
+As a developer
+I want to load the agreed entity definitions into the DynamoDB table
+So that the data is ready for the Lambda to read when it runs
+What needs to happen:
+
+Take the signed off entity document from Story 2
+Convert each entity into a JSON record in this format:
+
+json{
+  "destinationId": "SELF_SERVICE_001",
+  "entityKey": "account_type",
+  "entityType": "CONSTRAINED",
+  "entityDescription": "Type of bank account the customer holds",
+  "allowedValues": ["checking", "savings", "money_market"],
+  "validationType": null,
+  "confidenceThreshold": "MED",
+  "exampleUtterance": "I want to transfer from my checking account"
+}
+
+Write a simple script to load all records into DynamoDB dev table
+Script should be idempotent — running it twice does not create duplicates
+Script stored in the repository so anyone can run it
+
+Done when:
+
+All entity records loaded into DynamoDB dev table
+Records verified in AWS console — count matches the signed off document
+Script is in the repository with a README explaining how to run it
+
+Story Points: 3
+
+Week 3 — Sprint 3
+
+Story 4 — Create Lambda Skeleton in Go Lang
+As a developer
+I want to create the basic Lambda function structure in Go Lang
+So that the team has a foundation to build the extraction logic on top of
+What needs to happen:
+
+Create a new Lambda function in Go Lang
+Entry point receives ContactId and Destination Id as input
+Basic logging set up — logs what comes in and what goes out
+Returns a basic response so we can confirm it is working
+Lambda deployed to dev environment
+IAM role attached with:
+
+Read access to DynamoDB
+Access to Bedrock
+
+
+
+Done when:
+
+Lambda exists in AWS dev
+Can be invoked with a test payload and returns a response
+Logs appear in CloudWatch
+IAM permissions are correct — no access denied errors
+
+Story Points: 3
+
+Story 5 — Read Conversation History and Entity Definitions
+As a developer
+I want to implement the config loading logic inside the Lambda
+So that the function knows what the customer said and what entities to look for
+What needs to happen:
+
+Lambda receives ContactId and Destination Id
+Using ContactId query the conversation turns from DynamoDB
+Extract what the customer actually said from those turns
+If no conversation history found → stop and return EMPTY response
+Using Destination Id fetch entity definitions from IntentEntityDefinitions table
+If no entity definitions found → stop and return EMPTY response
+All steps logged clearly
+
+Done when:
+
+Lambda correctly reads conversation history using ContactId
+Lambda correctly reads entity definitions using Destination Id
+Returns EMPTY with g_entity_extraction_status false when either is missing
+Unit tests written for both EMPTY paths
+Unit tests pass
+
+Story Points: 5
+
+Story 6 — Build Extraction Prompt
+As a developer
+I want to build the extraction prompt inside the Lambda
+So that we send clear and complete instructions to the LLM before calling it
+What needs to happen:
+
+Read entity definitions loaded in Story 5
+For each entity build a prompt section that includes:
+
+Entity name and description
+If CONSTRAINED — include the allowed values list
+If OPEN — include the expected format
+Example utterance showing how a customer might say it
+
+
+Embed confidence scoring rules into the prompt:
+
+HIGH if value is clearly stated
+MED if value is inferred
+LOW if value is ambiguous
+
+
+Embed validation rules into the prompt:
+
+amount: must be a positive number
+date: must be YYYY-MM-DD
+routing: must be exactly 9 digits
+phone: must be 10 to 11 digits
+percentage: must be between 0 and 100
+
+
+Prompt reviewed by tech lead before moving to next story
+
+Done when:
+
+Prompt is built correctly for both CONSTRAINED and OPEN entities
+Confidence and validation rules are embedded
+Tech lead has reviewed and approved the prompt output
+Unit tests written for prompt structure
+
+Story Points: 5
+
+Story 7 — Call Amazon Nova Pro via Bedrock
+As a developer
+I want to call Amazon Nova Pro through Bedrock inside the Lambda
+So that we get entity values extracted from the customer conversation
+What needs to happen:
+
+Lambda sends the built prompt and customer transcript to Amazon Nova Pro
+Temperature set to 0 — consistent and deterministic results every time
+Capture the raw text string response from Nova Pro
+If Bedrock call fails for any reason → stop and return EMPTY response
+Error logged with full details if call fails
+
+Done when:
+
+Lambda successfully calls Nova Pro and receives a response
+Temperature is set to 0
+EMPTY response returned correctly when Bedrock fails
+Unit tests written for success and failure paths
+Unit tests pass
+
+Story Points: 5
+
+Story 8 — Parse and Validate LLM Output
+As a developer
+I want to parse and validate the LLM output inside the Lambda
+So that every entity value is checked by code before being accepted
+What needs to happen:
+
+Strip markdown fences from LLM output if present
+Parse the JSON string into a Go struct
+Verify expected entity keys exist in the parsed output
+If parsing fails → set all entities to NILL and add to missing list
+Loop through each entity individually:
+Confidence check:
+
+Below threshold → REJECT → NILL
+
+For CONSTRAINED entities:
+
+Value in allowed list → ACCEPT
+Not in list → REJECT → NILL
+
+For OPEN entities:
+
+Passes format validation → ACCEPT
+Fails validation → REJECT → NILL
+
+
+LLM output is never trusted directly — code makes all decisions
+
+Done when:
+
+Parsing works correctly for clean and messy LLM output
+All validation rules enforced by code
+Fallback works correctly when parsing fails
+Unit tests written for every validation rule
+Unit tests written for fallback path
+All unit tests pass
+
+Story Points: 8
+
+Story 9 — Build Response and Return Status
+As a developer
+I want to build the final response and determine the correct status
+So that the caller receives a clean structured result they can act on
+What needs to happen:
+
+Build response as an array of objects
+Each entity object contains name, value, description
+Accepted entities carry the extracted string value
+Rejected entities carry NILL
+Append count and missing_count as numbers (not strings)
+Serialise the entire array via JSON stringify before returning
+Determine status:
+
+missing_count equals 0 → COMPLETE · g_entity_extraction_status true
+found_count greater than 0 → PARTIAL · g_entity_extraction_status true
+found_count equals 0 → EMPTY · g_entity_extraction_status false
+
+
+
+Done when:
+
+Response is a correctly structured array of objects
+count and missing_count are numbers not strings
+Status is determined correctly for all three scenarios
+Unit tests written for COMPLETE, PARTIAL, and EMPTY
+End to end integration test passes in dev environment
+Tech lead signs off
+
+Story Points: 5
+
+Full Summary
+SprintStoryDescriptionPointsWeek 1Story 1Create DynamoDB table3Week 2Story 2Define entities with business3Week 2Story 3Load entity data into table3Week 3Story 4Lambda skeleton in Go Lang3Week 3Story 5Read conversation history and entity definitions5Week 3Story 6Build extraction prompt5Week 3Story 7Call Amazon Nova Pro via Bedrock5Week 3Story 8Parse and validate LLM output8Week 3Story 9Build response and return status5
+Total: 40 points across 3 weeks
+
+Want me to save this as a document you can hand to the Scrum Master?Sonnet 4.6Adaptive
