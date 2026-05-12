@@ -1,0 +1,282 @@
+Here are the **best 20 CloudWatch Logs Insights queries for Amazon Connect contact flow logs**.
+
+## 1. One contact’s full journey
+
+```sql
+fields @timestamp, ContactId, ContactFlowName, Identifier, Parameters, Results, @message
+| filter ContactId = "CONTACT_ID_HERE" or @message like /CONTACT_ID_HERE/
+| sort @timestamp asc
+| limit 500
+```
+
+## 2. Latest contact flow errors
+
+```sql
+fields @timestamp, ContactId, ContactFlowName, Identifier, Results, @message
+| filter @message like /ERROR|Error|Exception|Failed|Failure|Timeout|Timed out/
+| sort @timestamp desc
+| limit 100
+```
+
+## 3. Error count over time
+
+```sql
+fields @timestamp, @message
+| filter @message like /ERROR|Error|Exception|Failed|Failure|Timeout|Timed out/
+| stats count(*) as errorCount by bin(5m)
+| sort @timestamp desc
+```
+
+## 4. Top failing flow blocks
+
+```sql
+fields @timestamp, ContactFlowName, Identifier, Results, @message
+| filter @message like /ERROR|Error|Exception|Failed|Failure|Timeout/
+| stats count(*) as failures by ContactFlowName, Identifier
+| sort failures desc
+| limit 30
+```
+
+## 5. Lambda invocation failures
+
+```sql
+fields @timestamp, ContactId, ContactFlowName, Identifier, Results, @message
+| filter @message like /Lambda|Invoke AWS Lambda function|FunctionArn/
+| filter @message like /ERROR|Error|Exception|Failed|Timeout|AccessDenied|ResourceNotFound|Unhandled/
+| sort @timestamp desc
+| limit 100
+```
+
+## 6. Lambda calls by flow/block
+
+```sql
+fields @timestamp, ContactFlowName, Identifier, @message
+| filter @message like /Lambda|Invoke AWS Lambda function|FunctionArn/
+| stats count(*) as lambdaCalls by ContactFlowName, Identifier
+| sort lambdaCalls desc
+| limit 50
+```
+
+## 7. Lex bot issues
+
+```sql
+fields @timestamp, ContactId, ContactFlowName, Identifier, Results, @message
+| filter @message like /Lex|Bot|Intent|Slot|NoInput|NoMatch|Fallback/
+| filter @message like /ERROR|Error|Failed|NoInput|NoMatch|Fallback|Timeout/
+| sort @timestamp desc
+| limit 100
+```
+
+## 8. Lex intent results
+
+```sql
+fields @timestamp, ContactId, ContactFlowName, Identifier, Results, @message
+| filter @message like /Lex|Intent/
+| sort @timestamp desc
+| limit 100
+```
+
+## 9. Transfer failures
+
+```sql
+fields @timestamp, ContactId, ContactFlowName, Identifier, Results, @message
+| filter @message like /Transfer|Queue|Agent/
+| filter @message like /Failed|Failure|Error|At capacity|No agents|Timeout/
+| sort @timestamp desc
+| limit 100
+```
+
+## 10. Queue-related events
+
+```sql
+fields @timestamp, ContactId, ContactFlowName, Identifier, Parameters, Results, @message
+| filter @message like /Queue|Transfer to queue|Set working queue|Get queue metrics|Enqueue/
+| sort @timestamp desc
+| limit 150
+```
+
+## 11. Disconnect or hang-up events
+
+```sql
+fields @timestamp, ContactId, ContactFlowName, Identifier, Results, @message
+| filter @message like /Disconnect|disconnected|Customer disconnect|Contact disconnected|Hangup|Hang up/
+| sort @timestamp desc
+| limit 100
+```
+
+## 12. Customer input / DTMF issues
+
+```sql
+fields @timestamp, ContactId, ContactFlowName, Identifier, Parameters, Results, @message
+| filter @message like /Get customer input|Store customer input|DTMF|NoInput|NoMatch|Input/
+| sort @timestamp desc
+| limit 150
+```
+
+## 13. NoInput and NoMatch count
+
+```sql
+fields @timestamp, ContactFlowName, Identifier, @message
+| filter @message like /NoInput|NoMatch/
+| stats count(*) as count by ContactFlowName, Identifier
+| sort count desc
+| limit 30
+```
+
+## 14. Prompt or audio playback errors
+
+```sql
+fields @timestamp, ContactId, ContactFlowName, Identifier, Results, @message
+| filter @message like /Play prompt|Prompt|Audio|S3/
+| filter @message like /ERROR|Error|Failed|AccessDenied|NoSuchKey|not found|Invalid/
+| sort @timestamp desc
+| limit 100
+```
+
+## 15. Contact attribute issues
+
+```sql
+fields @timestamp, ContactId, ContactFlowName, Identifier, Parameters, Results, @message
+| filter @message like /Attribute|Contact attribute/
+| filter @message like /Invalid|null|empty|not found|missing|Failed|Error/
+| sort @timestamp desc
+| limit 100
+```
+
+## 16. Permission and access issues
+
+```sql
+fields @timestamp, ContactId, ContactFlowName, Identifier, Results, @message
+| filter @message like /AccessDenied|Unauthorized|not authorized|permission|KMS|IAM|Forbidden/
+| sort @timestamp desc
+| limit 100
+```
+
+## 17. Find calls by phone number
+
+```sql
+fields @timestamp, ContactId, ContactFlowName, Identifier, Parameters, Results, @message
+| filter @message like /PHONE_NUMBER_HERE/
+| sort @timestamp asc
+| limit 300
+```
+
+## 18. High-volume contact flows
+
+```sql
+fields ContactFlowName
+| stats count(*) as eventCount by ContactFlowName
+| sort eventCount desc
+| limit 20
+```
+
+## 19. Most active flow blocks
+
+```sql
+fields ContactFlowName, Identifier
+| stats count(*) as eventCount by ContactFlowName, Identifier
+| sort eventCount desc
+| limit 50
+```
+
+## 20. Best all-in-one troubleshooting query
+
+```sql
+fields @timestamp, ContactId, ContactFlowName, Identifier, Parameters, Results, @message
+| filter @message like /ERROR|Error|Exception|Failed|Failure|Timeout|Timed out|AccessDenied|Unauthorized|ResourceNotFound|NoSuchKey|NoInput|NoMatch|Fallback|Disconnect|Transfer/
+| sort @timestamp desc
+| limit 200
+```
+Use this for **Lambda duration for one specific Amazon Connect ContactId**.
+
+## 1. Find Lambda logs for one ContactId
+
+```sql
+fields @timestamp, @message, @logStream
+| filter @message like /CONTACT_ID_HERE/
+| sort @timestamp asc
+| limit 300
+```
+
+## 2. If your Lambda logs include ContactId and REPORT lines
+
+```sql
+fields @timestamp, @requestId, @duration, @billedDuration, @maxMemoryUsed, @memorySize, @message
+| filter @type = "REPORT"
+| filter @message like /CONTACT_ID_HERE/
+| sort @timestamp asc
+| limit 100
+```
+
+But note: **Lambda REPORT lines usually do not contain the ContactId** unless your Lambda logs it on the same request context. Better approach below.
+
+## 3. Best approach: map ContactId to Lambda requestId
+
+First, find the Lambda request ID from application logs:
+
+```sql
+fields @timestamp, @requestId, @message
+| filter @message like /CONTACT_ID_HERE/
+| sort @timestamp asc
+| limit 100
+```
+
+Copy the `@requestId`, then run:
+
+```sql
+fields @timestamp, @requestId, @duration, @billedDuration, @maxMemoryUsed, @memorySize
+| filter @type = "REPORT"
+| filter @requestId = "LAMBDA_REQUEST_ID_HERE"
+| limit 20
+```
+
+## 4. If ContactId is stored as JSON field
+
+```sql
+fields @timestamp, contactId, @requestId, @message
+| filter contactId = "CONTACT_ID_HERE"
+| sort @timestamp asc
+| limit 100
+```
+
+Then use the request ID:
+
+```sql
+fields @timestamp, @requestId, @duration, @billedDuration, @maxMemoryUsed, @memorySize
+| filter @type = "REPORT"
+| filter @requestId = "LAMBDA_REQUEST_ID_HERE"
+| limit 20
+```
+
+## 5. Best combined query when ContactId appears in Lambda logs
+
+```sql
+fields @timestamp, @type, @requestId, @duration, @billedDuration, @maxMemoryUsed, @memorySize, @message
+| filter @message like /CONTACT_ID_HERE/ or @requestId = "LAMBDA_REQUEST_ID_HERE"
+| sort @timestamp asc
+| limit 300
+```
+
+Replace:
+
+```text
+CONTACT_ID_HERE
+LAMBDA_REQUEST_ID_HERE
+```
+
+Best practical workflow:
+
+```sql
+fields @timestamp, @requestId, @message
+| filter @message like /CONTACT_ID_HERE/
+| sort @timestamp asc
+| limit 100
+```
+
+Then:
+
+```sql
+fields @timestamp, @requestId, @duration, @billedDuration, @maxMemoryUsed, @memorySize
+| filter @type = "REPORT"
+| filter @requestId = "PASTE_REQUEST_ID_HERE"
+```
