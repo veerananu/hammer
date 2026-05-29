@@ -1,0 +1,4 @@
+Before coding, state your assumptions explicitly. If ambiguous, present interpretations and ask — don't pick silently. Push back if a simpler approach exists.
+Write minimum code. No abstractions, no extra features, no configurability, no error handling for impossible cases unless asked. If existing code could be simpler, rewrite it. Ask yourself: would a senior engineer say this is overcomplicated? If yes, simplify.
+Only touch what the task requires. Match existing style. If you notice unrelated dead code, mention it — don't delete it. Remove only imports/variables YOUR changes made unused.
+For complex tasks, write a plan first: each step with a verifiable check. Transform tasks into goals — write a test that defines success, then meet it. Loop until success criteria are met.
