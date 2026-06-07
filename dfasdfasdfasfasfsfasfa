@@ -1,0 +1,428 @@
+// Package parser resolves natural-language date expressions such as
+// "next friday", "the 30th", "in two weeks", or "march 5 2026" into
+// canonical YYYY-MM-DD strings, relative to a supplied reference date.
+package parser
+
+import (
+	"fmt"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	models "iva-entities-extractor/internal/models"
+)
+
+// resolveHorizonDays bounds how far in the future a resolved date may fall.
+// Dates earlier than the reference day or beyond this horizon are rejected.
+const resolveHorizonDays = 365
+
+// Regex rules compiled once at package init.
+var (
+	reCasual = regexp.MustCompile(`(?i)(?:^|\W)(now|today|tonight|tomorrow|tmr)(?:\W|$)`)
+
+	reWeekday = regexp.MustCompile(
+		`(?i)(?:^|\W)` +
+			`(?:on\s+)?` +
+			`(?:(next|this|last|past)\s+)?` +
+			`(sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tue|wed|thu|fri|sat)` +
+			`(?:\s+(?:this|next)\s+week)?` +
+			`(?:\W|$)`,
+	)
+
+	reOffset = regexp.MustCompile(
+		`(?i)(?:^|\W)in\s+` +
+			`(a|an|one|two|three|four|five|six|seven|eight|nine|ten|[0-9]+)\s+` +
+			`(days?|weeks?|months?)` +
+			`(?:\W|$)`,
+	)
+
+	reFromNow = regexp.MustCompile(
+		`(?i)(?:^|\W)` +
+			`(a|an|one|two|three|four|five|six|seven|eight|nine|ten|[0-9]+)\s+` +
+			`(days?|weeks?|months?)\s+from\s+(?:now|today)` +
+			`(?:\W|$)`,
+	)
+
+	// Named groups (ord/wd/mod, suffixed 1 or 2) let the two alternation
+	// branches share one handler without relying on positional indexes.
+	reOrdinalWeekday = regexp.MustCompile(
+		`(?i)(?:^|\W)` +
+			`(?:` +
+			`(?P<ord1>first|second|third|fourth|last)\s+` +
+			`(?P<wd1>sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tue|wed|thu|fri|sat)` +
+			`\s+(?:of\s+)?(?P<mod1>next|this)\s+month` +
+			`|` +
+			`(?P<mod2>next|this)\s+month\s+` +
+			`(?P<ord2>first|second|third|fourth|last)\s+` +
+			`(?P<wd2>sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tue|wed|thu|fri|sat)` +
+			`)` +
+			`(?:\W|$)`,
+	)
+
+	// reDayNextMonth must be checked before reDayOfMonth to avoid a partial match on "the 15th"
+	reDayNextMonth = regexp.MustCompile(`(?i)(?:^|\W)(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)?\s+of\s+(next|this)\s+month(?:\W|$)`)
+
+	reMonthBoundary = regexp.MustCompile(`(?i)(?:^|\W)(first|end|last)\s+of\s+(?:the\s+)?(next|this|current)?\s*month(?:\W|$)`)
+
+	reDayOfMonth = regexp.MustCompile(`(?i)(?:^|\W)(?:on\s+)?the\s+(\d{1,2})(?:st|nd|rd|th)?(?:\W|$)`)
+
+	reNamedDate = regexp.MustCompile(
+		`(?i)(?:^|\W)` +
+			`(january|february|march|april|may|june|july|august|` +
+			`september|october|november|december|` +
+			`jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\s+` +
+			`(\d{1,2})(?:st|nd|rd|th)?(?:[,\s]+(\d{4}))?` +
+			`(?:\W|$)`,
+	)
+)
+
+var weekdayNames = map[string]time.Weekday{
+	"sunday": time.Sunday, "sun": time.Sunday,
+	"monday": time.Monday, "mon": time.Monday,
+	"tuesday": time.Tuesday, "tue": time.Tuesday,
+	"wednesday": time.Wednesday, "wed": time.Wednesday,
+	"thursday": time.Thursday, "thu": time.Thursday,
+	"friday": time.Friday, "fri": time.Friday,
+	"saturday": time.Saturday, "sat": time.Saturday,
+}
+
+var ordinals = map[string]int{
+	"first": 1, "second": 2, "third": 3, "fourth": 4, "last": -1,
+}
+
+var monthNames = map[string]time.Month{
+	"january": time.January, "jan": time.January,
+	"february": time.February, "feb": time.February,
+	"march": time.March, "mar": time.March,
+	"april": time.April, "apr": time.April,
+	"may":  time.May,
+	"june": time.June, "jun": time.June,
+	"july": time.July, "jul": time.July,
+	"august": time.August, "aug": time.August,
+	"september": time.September, "sep": time.September,
+	"october": time.October, "oct": time.October,
+	"november": time.November, "nov": time.November,
+	"december": time.December, "dec": time.December,
+}
+
+// dateRule pairs a regex with the handler that resolves its match.
+//
+// A handler receives the full submatch slice and the reference day. It
+// returns the resolved date formatted as YYYY-MM-DD and true on success, or
+// "" and false when the match cannot be resolved to a valid calendar date
+// (for example, an unknown token or an impossible day). A false return is
+// treated as a rejection, not a fall-through to later rules.
+type dateRule struct {
+	re     *regexp.Regexp
+	handle func(m []string, today time.Time) (string, bool)
+}
+
+// dateRules are evaluated in order; the first regex match wins.
+// Order is load-bearing: specific month rules must precede generic weekday/day rules.
+var dateRules = []dateRule{
+	{reCasual, resolveCasual},
+	{reOrdinalWeekday, resolveOrdinalWeekday},
+	{reWeekday, resolveWeekday},
+	{reOffset, resolveOffset},
+	{reFromNow, resolveOffset},
+	{reDayNextMonth, resolveDayNextMonth},
+	{reMonthBoundary, resolveMonthBoundary},
+	{reDayOfMonth, resolveDayOfMonth},
+	{reNamedDate, resolveNamedDate},
+}
+
+type dateResult int
+
+const (
+	dateNotFound dateResult = iota // text didn't match any rule
+	dateValid                      // resolved and within window
+	dateRejected                   // matched a rule but invalid or out of range
+)
+
+// ResolveDateEntities resolves natural-language date values to YYYY-MM-DD for
+// all date-type entities, updating the extracted map in place. An entity is
+// treated as a date when its DataType is "Date" or its name contains "date"
+// (case-insensitive). Values that match a resolution rule but prove invalid or
+// outside the [now, now+resolveHorizonDays] window are set to nil; values that
+// match no rule, are absent, or are empty are left unchanged.
+func ResolveDateEntities(extracted map[string]any, defs []models.EntityDefinition, now time.Time) {
+	today := ymd(now.Year(), now.Month(), now.Day(), now.Location())
+	for _, def := range defs {
+		isDateType := def.DataType == "Date" ||
+			strings.Contains(strings.ToLower(def.EntityName), "date")
+		if !isDateType {
+			continue
+		}
+
+		val, ok := extracted[def.EntityName]
+		if !ok || val == nil {
+			continue
+		}
+
+		raw := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", val)))
+		if raw == "" {
+			continue
+		}
+
+		switch resolved, status := resolveDate(raw, today); status {
+		case dateValid:
+			extracted[def.EntityName] = resolved
+		case dateRejected:
+			extracted[def.EntityName] = nil
+		}
+		// dateNotFound: leave the original value untouched
+	}
+}
+
+// resolveDate applies dateRules in order and returns on the first matching
+// regex. A rule whose regex matches but whose handler fails (invalid or
+// out-of-range date) yields dateRejected rather than falling through to later
+// rules. If no regex matches, it returns dateNotFound.
+func resolveDate(raw string, today time.Time) (string, dateResult) {
+	for _, rule := range dateRules {
+		if m := rule.re.FindStringSubmatch(raw); m != nil {
+			res, ok := rule.handle(m, today)
+			if ok && withinWindow(res, today) {
+				return res, dateValid
+			}
+			return "", dateRejected
+		}
+	}
+	return "", dateNotFound
+}
+
+// withinWindow reports whether res falls inside [today, today+resolveHorizonDays].
+func withinWindow(res string, today time.Time) bool {
+	t, err := time.ParseInLocation("2006-01-02", res, today.Location())
+	if err != nil {
+		return false
+	}
+	limit := today.AddDate(0, 0, resolveHorizonDays)
+	return !t.Before(today) && !t.After(limit)
+}
+
+func resolveCasual(m []string, today time.Time) (string, bool) {
+	switch strings.TrimSpace(m[1]) {
+	case "today", "tonight", "now":
+		return today.Format("2006-01-02"), true
+	case "tomorrow", "tmr":
+		return today.AddDate(0, 0, 1).Format("2006-01-02"), true
+	}
+	return "", false
+}
+
+func resolveWeekday(m []string, today time.Time) (string, bool) {
+	modifier := strings.ToLower(strings.TrimSpace(m[1]))
+	wd, ok := weekdayNames[strings.ToLower(strings.TrimSpace(m[2]))]
+	if !ok {
+		return "", false
+	}
+	diff := int(wd) - int(today.Weekday())
+	switch modifier {
+	case "last", "past":
+		if diff >= 0 {
+			diff -= 7
+		}
+	case "this":
+		if diff < 0 {
+			diff += 7
+		}
+	case "next":
+		// Always resolve to the target weekday in the next calendar week
+		// (week starts Sunday). Anchor to next Sunday, then add the weekday offset.
+		daysToNextSun := (7 - int(today.Weekday())) % 7
+		if daysToNextSun == 0 {
+			daysToNextSun = 7
+		}
+		diff = daysToNextSun + int(wd)
+	default: // bare weekday - nearest upcoming occurrence
+		if diff <= 0 {
+			diff += 7
+		}
+	}
+	return today.AddDate(0, 0, diff).Format("2006-01-02"), true
+}
+
+func resolveOffset(m []string, today time.Time) (string, bool) {
+	return applyOffset(m[1], m[2], today)
+}
+
+func resolveOrdinalWeekday(m []string, today time.Time) (string, bool) {
+	g := namedGroups(reOrdinalWeekday, m)
+	ordStr := firstNonEmpty(g["ord1"], g["ord2"])
+	dayStr := firstNonEmpty(g["wd1"], g["wd2"])
+	modifier := firstNonEmpty(g["mod1"], g["mod2"])
+
+	n, ok := ordinals[ordStr]
+	if !ok {
+		return "", false
+	}
+	wd, ok := weekdayNames[dayStr]
+	if !ok {
+		return "", false
+	}
+	monthOffset := time.Month(1)
+	if modifier == "this" {
+		monthOffset = 0
+	}
+	firstOfMonth := ymd(today.Year(), today.Month()+monthOffset, 1, today.Location())
+	diff := int(wd) - int(firstOfMonth.Weekday())
+	if diff < 0 {
+		diff += 7
+	}
+	first := firstOfMonth.AddDate(0, 0, diff)
+	var result time.Time
+	if n == -1 { // "last"
+		result = first
+		for result.AddDate(0, 0, 7).Month() == firstOfMonth.Month() {
+			result = result.AddDate(0, 0, 7)
+		}
+	} else {
+		result = first.AddDate(0, 0, (n-1)*7)
+		if result.Month() != firstOfMonth.Month() {
+			return "", false
+		}
+	}
+	return result.Format("2006-01-02"), true
+}
+
+func resolveDayNextMonth(m []string, today time.Time) (string, bool) {
+	day, err := strconv.Atoi(m[1])
+	if err != nil || day < 1 || day > 31 {
+		return "", false
+	}
+	offset := 1
+	if strings.ToLower(m[2]) == "this" {
+		offset = 0
+	}
+	t := ymd(today.Year(), today.Month()+time.Month(offset), day, today.Location())
+	if t.Day() != day {
+		return "", false
+	}
+	return t.Format("2006-01-02"), true
+}
+
+func resolveMonthBoundary(m []string, today time.Time) (string, bool) {
+	boundary := strings.ToLower(strings.TrimSpace(m[1]))
+	offset := 0
+	if strings.ToLower(strings.TrimSpace(m[2])) == "next" {
+		offset = 1
+	}
+	switch boundary {
+	case "first":
+		return ymd(today.Year(), today.Month()+time.Month(offset), 1, today.Location()).Format("2006-01-02"), true
+	case "end", "last":
+		// day 0 of following month = last day of target month
+		return ymd(today.Year(), today.Month()+time.Month(offset)+1, 0, today.Location()).Format("2006-01-02"), true
+	}
+	return "", false
+}
+
+func resolveDayOfMonth(m []string, today time.Time) (string, bool) {
+	day, err := strconv.Atoi(m[1])
+	if err != nil || day < 1 || day > 31 {
+		return "", false
+	}
+	// Start at this month; if the resulting date is in the past or the month
+	// has no such day (e.g. "the 30th" when next month is February), advance
+	// month-by-month until a valid, non-past date is found. The cap (one year
+	// plus a margin) prevents an impossible day from looping unbounded.
+	for i := 0; i <= 13; i++ {
+		t := ymd(today.Year(), today.Month()+time.Month(i), day, today.Location())
+		if t.Day() != day { // month overflowed: no such day in this month
+			continue
+		}
+		if t.Before(today) {
+			continue
+		}
+		return t.Format("2006-01-02"), true
+	}
+	return "", false
+}
+
+func resolveNamedDate(m []string, today time.Time) (string, bool) {
+	mn, ok := monthNames[strings.ToLower(strings.TrimSpace(m[1]))]
+	if !ok {
+		return "", false
+	}
+	day, err := strconv.Atoi(m[2])
+	if err != nil || day < 1 || day > 31 {
+		return "", false
+	}
+	year := today.Year()
+	if m[3] != "" {
+		y, err := strconv.Atoi(m[3])
+		if err == nil {
+			if y < 100 {
+				y += 2000
+			}
+			year = y
+		}
+	}
+	t := ymd(year, mn, day, today.Location())
+	if t.Before(today) && m[3] == "" {
+		t = ymd(year+1, mn, day, today.Location())
+	}
+	if t.Day() != day {
+		return "", false
+	}
+	return t.Format("2006-01-02"), true
+}
+
+func applyOffset(numStr, unit string, today time.Time) (string, bool) {
+	n, ok := parseWordNum(strings.ToLower(strings.TrimSpace(numStr)))
+	if !ok {
+		return "", false
+	}
+	switch {
+	case strings.HasPrefix(unit, "day"):
+		return today.AddDate(0, 0, n).Format("2006-01-02"), true
+	case strings.HasPrefix(unit, "week"):
+		return today.AddDate(0, 0, n*7).Format("2006-01-02"), true
+	case strings.HasPrefix(unit, "month"):
+		return today.AddDate(0, n, 0).Format("2006-01-02"), true
+	}
+	return "", false
+}
+
+var wordNums = map[string]int{
+	"a": 1, "an": 1, "one": 1, "two": 2, "three": 3,
+	"four": 4, "five": 5, "six": 6, "seven": 7,
+	"eight": 8, "nine": 9, "ten": 10,
+}
+
+func parseWordNum(s string) (int, bool) {
+	if n, err := strconv.Atoi(s); err == nil {
+		return n, true
+	}
+	n, ok := wordNums[s]
+	return n, ok
+}
+
+// namedGroups maps each named capture group of re to its (trimmed,
+// lowercased) submatch value. Unnamed groups are ignored.
+func namedGroups(re *regexp.Regexp, m []string) map[string]string {
+	out := make(map[string]string)
+	for i, name := range re.SubexpNames() {
+		if name == "" || i >= len(m) {
+			continue
+		}
+		out[name] = strings.ToLower(strings.TrimSpace(m[i]))
+	}
+	return out
+}
+
+// firstNonEmpty returns the first non-empty string among its arguments, or "".
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func ymd(year int, month time.Month, day int, loc *time.Location) time.Time {
+	return time.Date(year, month, day, 0, 0, 0, 0, loc)
+}
