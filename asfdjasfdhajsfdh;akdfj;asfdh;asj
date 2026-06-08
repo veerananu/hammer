@@ -1,0 +1,491 @@
+package bedrock
+
+import (
+	"context"
+	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
+	bedrocktypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
+)
+
+type mockConverseClient struct {
+	output        *bedrockruntime.ConverseOutput
+	receivedInput *bedrockruntime.ConverseInput
+}
+
+func (c *mockConverseClient) Converse(_ context.Context, converseInput *bedrockruntime.ConverseInput, _ ...func(*bedrockruntime.Options)) (*bedrockruntime.ConverseOutput, error) {
+	c.receivedInput = converseInput
+	return c.output, nil
+}
+
+func TestCallWithCache_BuildsRequest(t *testing.T) {
+	client := &mockConverseClient{
+		output: &bedrockruntime.ConverseOutput{
+			Output: &bedrocktypes.ConverseOutputMemberMessage{
+				Value: bedrocktypes.Message{
+					Content: []bedrocktypes.ContentBlock{
+						&bedrocktypes.ContentBlockMemberText{Value: "bedrock response"},
+					},
+				},
+			},
+			Usage: &bedrocktypes.TokenUsage{
+				InputTokens:           aws.Int32(10),
+				OutputTokens:          aws.Int32(5),
+				CacheReadInputTokens:  aws.Int32(3),
+				CacheWriteInputTokens: aws.Int32(2),
+			},
+		},
+	}
+	service := NewService(client, GuardrailConfig{
+		GuardrailID:      "guardrail-id",
+		GuardrailVersion: "1",
+	})
+
+	content, usage, err := service.CallWithCache(context.Background(), "system prompt", "user message", RequestConfig{
+		ModelID:   "test-model",
+		ContactID: "contact-1",
+	})
+	if err != nil {
+		t.Fatalf("CallWithCache returned error: %v", err)
+	}
+	if content != "bedrock response" {
+		t.Fatalf("content = %q, expected bedrock response", content)
+	}
+	if usage.InputTokens != 10 {
+		t.Errorf("input tokens = %d, expected 10", usage.InputTokens)
+	}
+	if usage.OutputTokens != 5 {
+		t.Errorf("output tokens = %d, expected 5", usage.OutputTokens)
+	}
+	if usage.CacheReadTokens != 3 {
+		t.Errorf("cache read tokens = %d, expected 3", usage.CacheReadTokens)
+	}
+	if usage.CacheWriteTokens != 2 {
+		t.Errorf("cache write tokens = %d, expected 2", usage.CacheWriteTokens)
+	}
+	if client.receivedInput == nil {
+		t.Fatal("expected Converse to be called")
+	}
+	if client.receivedInput.GuardrailConfig == nil {
+		t.Fatal("expected guardrail config to be set")
+	}
+	if actualGuardrailID := aws.ToString(client.receivedInput.GuardrailConfig.GuardrailIdentifier); actualGuardrailID != "guardrail-id" {
+		t.Errorf("guardrail id = %q, expected guardrail-id", actualGuardrailID)
+	}
+	if actualGuardrailVersion := aws.ToString(client.receivedInput.GuardrailConfig.GuardrailVersion); actualGuardrailVersion != "1" {
+		t.Errorf("guardrail version = %q, expected 1", actualGuardrailVersion)
+
+
+
+package bedrock
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+	_ "time/tzdata"
+
+	models "iva-entities-extractor/internal/models"
+)
+
+type mockCachedCaller struct {
+	responseText          string
+	err                   error
+	receivedUserMessage   string
+	receivedRequestConfig RequestConfig
+}
+
+func (c *mockCachedCaller) CallWithCache(_ context.Context, _ string, userMessage string, requestConfig RequestConfig) (string, *Usage, error) {
+	c.receivedUserMessage = userMessage
+	c.receivedRequestConfig = requestConfig
+	if c.err != nil {
+		return "", nil, c.err
+	}
+	return c.responseText, &Usage{}, nil
+}
+
+func TestExtract_ReturnsParsedEntities(t *testing.T) {
+	caller := &mockCachedCaller{
+		responseText: `{
+			"amount":{"value":"500","wasExplicit":true},
+			"from_account":{"value":"checking","wasExplicit":false},
+			"ignored":{"value":"ignore me","wasExplicit":true}
+		}`,
+	}
+	extractor := NewExtractor(caller)
+
+	attrs, err := extractor.Extract(context.Background(), "intent", &models.ExtractionInput{
+		Utterances: []string{"Caller: transfer 500 from checking"},
+		EntityDefs: []models.EntityDefinition{
+			{EntityName: "amount", EntityType: "OPEN"},
+			{EntityName: "from_account", EntityType: "CONSTRAINED"},
+		},
+	}, RequestConfig{ModelID: "test-model", ContactID: "contact-1"})
+	if err != nil {
+		t.Fatalf("Extract returned error: %v", err)
+	}
+
+	expectedAttrs := map[string]string{
+		"amount":                    "500",
+		"amount_was_explicit":       "true",
+		"from_account":              "checking",
+		"from_account_was_explicit": "false",
+	}
+	assertStringMap(t, attrs, expectedAttrs)
+	if caller.receivedRequestConfig.ContactID != "contact-1" {
+		t.Fatalf("contact ID = %q, expected contact-1", caller.receivedRequestConfig.ContactID)
+	}
+	if !strings.Contains(caller.receivedUserMessage, "Caller: transfer 500 from checking") {
+		t.Fatalf("user prompt did not include conversation: %q", caller.receivedUserMessage)
+	}
+}
+
+func TestExtract_ResolvesDateValues(t *testing.T) {
+	setDateNow(t, time.Date(2026, time.January, 15, 12, 0, 0, 0, testLocation(t)))
+
+	caller := &mockCachedCaller{
+		responseText: `{"date":{"value":"tomorrow","wasExplicit":true}}`,
+	}
+	extractor := NewExtractor(caller)
+
+	attrs, err := extractor.Extract(context.Background(), "intent", &models.ExtractionInput{
+		Utterances: []string{"Caller: schedule it tomorrow"},
+		EntityDefs: []models.EntityDefinition{
+			{EntityName: "date", EntityType: "OPEN", DataType: "Date"},
+		},
+	}, RequestConfig{})
+	if err != nil {
+		t.Fatalf("Extract returned error: %v", err)
+	}
+
+	expectedAttrs := map[string]string{
+		"date":              "2026-01-16",
+		"date_was_explicit": "true",
+	}
+	assertStringMap(t, attrs, expectedAttrs)
+}
+
+func TestExtract_RemovesRejectedDateValues(t *testing.T) {
+	setDateNow(t, time.Date(2026, time.January, 15, 12, 0, 0, 0, testLocation(t)))
+
+	caller := &mockCachedCaller{
+		responseText: `{"date":{"value":"last friday","wasExplicit":true}}`,
+	}
+	extractor := NewExtractor(caller)
+
+	attrs, err := extractor.Extract(context.Background(), "intent", &models.ExtractionInput{
+		Utterances: []string{"Caller: schedule it last friday"},
+		EntityDefs: []models.EntityDefinition{
+			{EntityName: "date", EntityType: "OPEN", DataType: "Date"},
+		},
+	}, RequestConfig{})
+	if err != nil {
+		t.Fatalf("Extract returned error: %v", err)
+	}
+
+	assertStringMap(t, attrs, map[string]string{})
+}
+
+func TestExtract_ReturnsCallerError(t *testing.T) {
+	callerError := errors.New("bedrock unavailable")
+	extractor := NewExtractor(&mockCachedCaller{err: callerError})
+
+	_, err := extractor.Extract(context.Background(), "intent", &models.ExtractionInput{
+		Utterances: []string{"Caller: transfer 500"},
+		EntityDefs: []models.EntityDefinition{
+			{EntityName: "amount", EntityType: "OPEN"},
+		},
+	}, RequestConfig{})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "bedrock extraction call failed") {
+		t.Fatalf("error = %q, expected bedrock extraction call context", err.Error())
+	}
+	if !errors.Is(err, callerError) {
+		t.Fatalf("error does not wrap caller error: %v", err)
+	}
+}
+
+func TestExtract_ReturnsParseError(t *testing.T) {
+	extractor := NewExtractor(&mockCachedCaller{responseText: `not json`})
+
+	_, err := extractor.Extract(context.Background(), "intent", &models.ExtractionInput{
+		Utterances: []string{"Caller: transfer 500"},
+		EntityDefs: []models.EntityDefinition{
+			{EntityName: "amount", EntityType: "OPEN"},
+		},
+	}, RequestConfig{})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "parse model JSON") {
+		t.Fatalf("error = %q, expected parse model JSON context", err.Error())
+	}
+}
+
+func TestParseEntityJSON_StripsMarkdownFence(t *testing.T) {
+	parsed, err := parseEntityJSON("```json\n{\"amount\":{\"value\":\"500\",\"wasExplicit\":true}}\n```")
+	if err != nil {
+		t.Fatalf("parseEntityJSON returned error: %v", err)
+	}
+
+	amount := parsed["amount"]
+	if amount.Value == nil {
+		t.Fatal("expected amount value")
+	}
+	if *amount.Value != "500" {
+		t.Fatalf("amount value = %q, expected 500", *amount.Value)
+	}
+	if !amount.WasExplicit {
+		t.Fatal("expected amount to be explicit")
+	}
+}
+
+func setDateNow(t *testing.T, now time.Time) {
+	t.Helper()
+
+	originalDateNow := dateNow
+	dateNow = func() time.Time {
+		return now
+	}
+	t.Cleanup(func() {
+		dateNow = originalDateNow
+	})
+}
+
+func testLocation(t *testing.T) *time.Location {
+	t.Helper()
+
+	location, err := time.LoadLocation("America/Chicago")
+	if err != nil {
+		t.Fatalf("load America/Chicago location: %v", err)
+	}
+	return location
+}
+
+func assertStringMap(t *testing.T, actualMap, expectedMap map[string]string) {
+	t.Helper()
+
+	if len(actualMap) != len(expectedMap) {
+		t.Fatalf("map length = %d, expected %d; map = %#v", len(actualMap), len(expectedMap), actualMap)
+	}
+	for expectedKey, expectedValue := range expectedMap {
+		actualValue, ok := actualMap[expectedKey]
+		if !ok {
+			t.Fatalf("missing key %q in map %#v", expectedKey, actualMap)
+		}
+		if actualValue != expectedValue {
+			t.Fatalf("%s = %q, expected %q", expectedKey, actualValue, expectedValue)
+		}
+	}
+}
+
+
+
+
+
+package parser
+
+import (
+	"testing"
+	"time"
+
+	_ "time/tzdata"
+
+	models "iva-entities-extractor/internal/models"
+)
+
+func TestResolveDateEntities(t *testing.T) {
+	location := testLocation(t)
+
+	tests := []struct {
+		name           string
+		dateExpression string
+		referenceTime  time.Time
+		expectedValue  any
+	}{
+		{
+			name:           "today uses chicago calendar day",
+			dateExpression: "today",
+			referenceTime:  time.Date(2025, time.December, 31, 21, 30, 0, 0, location),
+			expectedValue:  "2025-12-31",
+		},
+		{
+			name:           "tomorrow",
+			dateExpression: "tomorrow",
+			referenceTime:  time.Date(2026, time.January, 15, 12, 0, 0, 0, location),
+			expectedValue:  "2026-01-16",
+		},
+		{
+			name:           "bare weekday",
+			dateExpression: "monday",
+			referenceTime:  time.Date(2026, time.January, 18, 12, 0, 0, 0, location),
+			expectedValue:  "2026-01-19",
+		},
+		{
+			name:           "next weekday",
+			dateExpression: "next monday",
+			referenceTime:  time.Date(2026, time.January, 18, 12, 0, 0, 0, location),
+			expectedValue:  "2026-01-26",
+		},
+		{
+			name:           "weekday next week suffix",
+			dateExpression: "monday next week",
+			referenceTime:  time.Date(2026, time.January, 18, 12, 0, 0, 0, location),
+			expectedValue:  "2026-01-26",
+		},
+		{
+			name:           "last weekday rejected",
+			dateExpression: "last monday",
+			referenceTime:  time.Date(2026, time.January, 15, 12, 0, 0, 0, location),
+			expectedValue:  nil,
+		},
+		{
+			name:           "prefix modifier wins over suffix",
+			dateExpression: "this monday next week",
+			referenceTime:  time.Date(2026, time.January, 18, 12, 0, 0, 0, location),
+			expectedValue:  "2026-01-19",
+		},
+		{
+			name:           "in days offset",
+			dateExpression: "in two days",
+			referenceTime:  time.Date(2026, time.January, 15, 12, 0, 0, 0, location),
+			expectedValue:  "2026-01-17",
+		},
+		{
+			name:           "weeks from now offset",
+			dateExpression: "3 weeks from now",
+			referenceTime:  time.Date(2026, time.January, 15, 12, 0, 0, 0, location),
+			expectedValue:  "2026-02-05",
+		},
+		{
+			name:           "ordinal weekday next month before modifier",
+			dateExpression: "first monday next month",
+			referenceTime:  time.Date(2026, time.January, 15, 12, 0, 0, 0, location),
+			expectedValue:  "2026-02-02",
+		},
+		{
+			name:           "ordinal weekday next month after modifier",
+			dateExpression: "next month first monday",
+			referenceTime:  time.Date(2026, time.January, 15, 12, 0, 0, 0, location),
+			expectedValue:  "2026-02-02",
+		},
+		{
+			name:           "last ordinal weekday this month",
+			dateExpression: "last friday this month",
+			referenceTime:  time.Date(2026, time.January, 15, 12, 0, 0, 0, location),
+			expectedValue:  "2026-01-30",
+		},
+		{
+			name:           "day next month",
+			dateExpression: "the 15th of next month",
+			referenceTime:  time.Date(2026, time.January, 15, 12, 0, 0, 0, location),
+			expectedValue:  "2026-02-15",
+		},
+		{
+			name:           "invalid explicit next month day rejected",
+			dateExpression: "the 31st of next month",
+			referenceTime:  time.Date(2026, time.January, 15, 12, 0, 0, 0, location),
+			expectedValue:  nil,
+		},
+		{
+			name:           "first of next month",
+			dateExpression: "first of next month",
+			referenceTime:  time.Date(2026, time.January, 15, 12, 0, 0, 0, location),
+			expectedValue:  "2026-02-01",
+		},
+		{
+			name:           "end of this month",
+			dateExpression: "end of this month",
+			referenceTime:  time.Date(2026, time.January, 15, 12, 0, 0, 0, location),
+			expectedValue:  "2026-01-31",
+		},
+		{
+			name:           "day of month future",
+			dateExpression: "the 20th",
+			referenceTime:  time.Date(2026, time.January, 15, 12, 0, 0, 0, location),
+			expectedValue:  "2026-01-20",
+		},
+		{
+			name:           "day of month skips invalid next month",
+			dateExpression: "the 30th",
+			referenceTime:  time.Date(2026, time.January, 31, 12, 0, 0, 0, location),
+			expectedValue:  "2026-03-30",
+		},
+		{
+			name:           "named date",
+			dateExpression: "march 5",
+			referenceTime:  time.Date(2026, time.January, 15, 12, 0, 0, 0, location),
+			expectedValue:  "2026-03-05",
+		},
+		{
+			name:           "past named date rolls to next year",
+			dateExpression: "jan 5",
+			referenceTime:  time.Date(2026, time.January, 15, 12, 0, 0, 0, location),
+			expectedValue:  "2027-01-05",
+		},
+		{
+			name:           "invalid named date rejected",
+			dateExpression: "february 29 2026",
+			referenceTime:  time.Date(2026, time.January, 15, 12, 0, 0, 0, location),
+			expectedValue:  nil,
+		},
+		{
+			name:           "outside horizon rejected",
+			dateExpression: "january 20 2027",
+			referenceTime:  time.Date(2026, time.January, 15, 12, 0, 0, 0, location),
+			expectedValue:  nil,
+		},
+		{
+			name:           "unmatched text left unchanged",
+			dateExpression: "payday",
+			referenceTime:  time.Date(2026, time.January, 15, 12, 0, 0, 0, location),
+			expectedValue:  "payday",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			extractedEntities := map[string]any{"date": testCase.dateExpression}
+			ResolveDateEntities(extractedEntities, []models.EntityDefinition{
+				{EntityName: "date", DataType: "Date"},
+			}, testCase.referenceTime)
+
+			actualValue := extractedEntities["date"]
+			if actualValue != testCase.expectedValue {
+				t.Fatalf("date = %v, expected %v", actualValue, testCase.expectedValue)
+			}
+		})
+	}
+}
+
+func TestResolveDateEntities_RequiresDateDataType(t *testing.T) {
+	location := testLocation(t)
+
+	extractedEntities := map[string]any{"transfer_date": "tomorrow"}
+	ResolveDateEntities(extractedEntities, []models.EntityDefinition{
+		{EntityName: "transfer_date"},
+	}, time.Date(2026, time.January, 15, 12, 0, 0, 0, location))
+
+	actualValue := extractedEntities["transfer_date"]
+	if actualValue != "tomorrow" {
+		t.Fatalf("transfer_date = %v, expected tomorrow", actualValue)
+	}
+}
+
+func testLocation(t *testing.T) *time.Location {
+	t.Helper()
+
+	location, err := time.LoadLocation("America/Chicago")
+	if err != nil {
+		t.Fatalf("load America/Chicago location: %v", err)
+	}
+	return location
+}
+
+	}
+}
