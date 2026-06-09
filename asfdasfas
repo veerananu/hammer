@@ -1,0 +1,75 @@
+DynamoDB table
+  |
+  v
+One session record
+  Example: contactid = "contact-1"
+  |
+  v
+A map field inside that record
+  Example: entities
+  |
+  v
+One entry inside the map
+  Example: TRANSFER_MONEY
+  |
+  v
+Stored string values for that entry
+  Example: t_entity_amount = "100"
+
+
+DynamoDB table
+  |
+  v
+{
+  "contactid": "contact-1",        <- session record key
+
+  "entities": {                    <- map field
+    "TRANSFER_MONEY": {            <- entry inside the map
+      "t_entity_amount": "100"     <- string value
+    }
+  }
+}
+
+
+
+
+In JSON form, the library writes this shape:
+
+{
+  "<partition key name>": "<partition key value>",
+  "<map name>": {
+    "<entry key>": {
+      "<value name>": "<string value>"
+    }
+  }
+}
+Example:
+
+{
+  "contactid": "contact-1",
+  "entities": {
+    "TRANSFER_MONEY": {
+      "t_entity_amount": "100",
+      "t_entity_account": "checking"
+    }
+  }
+}
+In this example, contactid, entities, TRANSFER_MONEY, and the t_entity_* names are caller-owned conventions. The library only writes the nested map.
+
+Responsibilities
+The library owns:
+
+Building DynamoDB UpdateItem requests.
+Creating the top-level map attribute if it is missing.
+Writing string values under one entry key.
+Preventing accidental creation of a new session item.
+Converting missing session items into ErrItemNotFound.
+The caller owns:
+
+Choosing the table name.
+Choosing the partition key attribute name.
+Choosing the partition key value for the session/contact.
+Choosing the top-level map name.
+Choosing the entry key.
+Preparing the string values to store.
+Applying any domain-specific naming rules.
