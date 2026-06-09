@@ -1,0 +1,25 @@
+This is a small reusable library, not a full application. So we are keeping the public API in one root package and creating only one private writer folder for implementation details.
+
+Current structure:
+
+iva-session-storage/
+  types.go              Public types
+  writer.go             Public write/save workflow
+  errors.go             Shared public errors
+  writer_test.go        Writer behavior tests
+  README.md
+  go.mod
+  go.sum
+
+  internal/
+    writer/
+      validation.go     Private writer input validation
+      dynamodb.go       Private DynamoDB UpdateItem request helpers
+
+The root package is what other applications import:
+
+  import sessionstorage "iva-session-storage"
+
+The internal/writer folder is private implementation code. Callers should not import it directly.
+
+We are avoiding application-style folders like service/, repository/, models/, and handlers/ because those are more suitable for full applications. This module is a small shared library.
