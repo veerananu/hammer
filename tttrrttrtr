@@ -1,0 +1,23 @@
+{
+  "contactid": { "S": "contact-123" },
+  "entities": {
+    "M": {
+      "TRANSFER_MONEY": {
+        "M": {
+          "t_entity_amount": {
+            "M": {
+              "value": { "S": "100" },
+              "confidence": { "S": "high" }
+            }
+          },
+          "t_entity_transfer_date": {
+            "M": {
+              "value": { "S": "2026-09-02" },
+              "confidence": { "S": "medium" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
