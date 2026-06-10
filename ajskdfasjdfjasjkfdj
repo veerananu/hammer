@@ -1,0 +1,93 @@
+1. The storage library itself (writer, generic nested-map update, client)
+We need to implement iva-session-storage — the generic part that knows how to write nested maps into DynamoDB. It should take a partition key, a map name, an entry key, and a nested map, ensure the top-level map exists, and write the entry under it — while refusing to create rows that don't already exist. This layer must not know anything about entities or business meaning; it just writes whatever nested map it's handed. We'd implement this piece if the work is in how data gets written.
+
+
+
+	{reNumericDate, resolveNumericDate},
+
+
+
+
+func resolveNumericDate(m []string, today time.Time) (string, bool) {
+	first, err := strconv.Atoi(m[1])
+	if err != nil {
+		return "", false
+	}
+	second, err := strconv.Atoi(m[2])
+	if err != nil {
+		return "", false
+	}
+	third, err := strconv.Atoi(m[3])
+	if err != nil {
+		return "", false
+	}
+
+	var year, month, day int
+	switch {
+	case first > 31:
+		year, month, day = first, second, third
+	case third > 31:
+		year = third
+		if first > 12 {
+			day, month = first, second
+		} else {
+			month, day = first, second
+		}
+	default:
+		return "", false
+	}
+
+	if year < 100 {
+		year += 2000
+	}
+	if month < 1 || month > 12 || day < 1 || day > 31 {
+		return "", false
+	}
+	t := ymd(year, time.Month(month), day, today.Location())
+	if t.Day() != day || t.Month() != time.Month(month) {
+		return "", false
+	}
+	return t.Format(dateLayout), true
+}
+
+
+	reNumericDate = regexp.MustCompile(`(?i)(?:^|\W)(\d{1,4})[-/.](\d{1,2})[-/.](\d{1,4})(?:\W|$)`)
+
+
+
+{
+			name:           "numeric date uses month first convention",
+			dateExpression: "09-02-2026",
+			referenceTime:  time.Date(2026, time.January, 15, 12, 0, 0, 0, location),
+			expectedValue:  "2026-09-02",
+		},
+		{
+			name:           "numeric date uses day first when first field cannot be month",
+			dateExpression: "15-02-2026",
+			referenceTime:  time.Date(2026, time.January, 15, 12, 0, 0, 0, location),
+			expectedValue:  "2026-02-15",
+		},
+		{
+			name:           "numeric date supports leading year",
+			dateExpression: "2026-09-02",
+			referenceTime:  time.Date(2026, time.January, 15, 12, 0, 0, 0, location),
+			expectedValue:  "2026-09-02",
+		},
+		{
+			name:           "numeric date supports slash separator",
+			dateExpression: "9/2/2026",
+			referenceTime:  time.Date(2026, time.January, 15, 12, 0, 0, 0, location),
+			expectedValue:  "2026-09-02",
+		},
+		{
+			name:           "numeric date supports dot separator",
+			dateExpression: "9.2.2026",
+			referenceTime:  time.Date(2026, time.January, 15, 12, 0, 0, 0, location),
+			expectedValue:  "2026-09-02",
+		},
+		{
+			name:           "invalid numeric date rejected",
+			dateExpression: "02-30-2026",
+			referenceTime:  time.Date(2026, time.January, 15, 12, 0, 0, 0, location),
+			expectedValue:  nil,
+		},
